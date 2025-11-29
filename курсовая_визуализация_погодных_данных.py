@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from google.colab import drive
+"""from google.colab import drive"""
 from sklearn.preprocessing import MinMaxScaler
 import plotly.express as px
 from ipywidgets import interact, Dropdown, FloatRangeSlider
