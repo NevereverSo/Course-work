@@ -173,8 +173,19 @@ if page == "Исходные данные":
     # TIME SERIES ---------------------------------------------------
     if graph_type == "Time Series" and "date" in df_raw.columns:
         ts_col = st.selectbox("Выберите числовой признак для временного ряда:", num_cols)
-        fig = px.line(df_raw, x="date", y=ts_col, title=f"Временной ряд: {ts_col}")
-        st.plotly_chart(fig, use_container_width=True)
+        
+        # Агрегация по дате, если много повторов
+        df_ts = df_raw.groupby("date")[ts_col].mean().reset_index()
+        
+        fig = px.bar(
+            df_ts,
+            x="date",
+            y=ts_col,
+            title=f"Временной ряд (столбцы): {ts_col}",
+            labels={ts_col: ts_col, "date": "Дата"}
+        )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================================
 # PAGE 2 — ANALYSIS RESULTS (KMeans + Regression)
