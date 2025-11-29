@@ -90,12 +90,6 @@ if page == "Исходные данные":
 
     with tab3:
         st.subheader("Таблица данных — Daily Weather")
-        if "city" in daily_weather_df.columns:
-            city = st.selectbox("Выберите город:", daily_weather_df["city"].unique())
-            city_df = daily_weather_df[daily_weather_df["city"] == city]
-        else:
-            st.warning("В CSV нет колонки 'city'. Отображается весь датасет.")
-            city_df = daily_weather_df
 
         st.dataframe(city_df)
         st.write(city_df.describe(include="all"))
