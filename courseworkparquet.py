@@ -90,9 +90,10 @@ if page == "Исходные данные":
 
     with tab3:
         st.subheader("Таблица данных — Daily Weather")
-
-        st.dataframe(city_df)
-        st.write(city_df.describe(include="all"))
+        
+        # Показываем весь датасет без фильтрации по городу
+        st.dataframe(daily_weather_df)
+        st.write(daily_weather_df.describe(include="all"))
 
     # VISUALIZATION CONTROLS -------------------------------------
     st.header("Графики")
@@ -168,7 +169,7 @@ if page == "Исходные данные":
     if graph_type == "Time Series" and "date" in df_raw.columns:
         ts_col = st.selectbox("Выберите числовой признак для временного ряда:", num_cols)
         
-        # Агрегация по дате, если много повторов
+        # Агрегация по дате
         df_ts = df_raw.groupby("date")[ts_col].mean().reset_index()
         
         fig = px.bar(
@@ -178,8 +179,9 @@ if page == "Исходные данные":
             title=f"Временной ряд (столбцы): {ts_col}",
             labels={ts_col: ts_col, "date": "Дата"}
         )
-    
-    st.plotly_chart(fig, use_container_width=True)
+        
+        st.plotly_chart(fig, use_container_width=True)
+
 
 # ==========================================================
 # PAGE 2 — ANALYSIS RESULTS (KMeans + Regression)
