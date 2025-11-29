@@ -119,16 +119,9 @@ if page == "📊 Исходные данные":
     # BOXPLOT ------------------------------------------------------
     if graph_type == "Boxplot":
         col = st.selectbox("Числовой признак:", num_cols)
-    
-        fig = px.box(
-            df_raw,
-            x=pd.Series(["value"] * len(df_raw)),
-            y=col,
-            labels={"x": "", col: col},
-            title=f"Boxplot for {col}"
-        )
+        fig = px.box(df_raw, y=col)
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.plotly_chart(fig, use_container_width=True)
     # SCATTER ------------------------------------------------------
     if graph_type == "Scatter plot":
         x = st.selectbox("X:", num_cols)
