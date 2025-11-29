@@ -1,4 +1,4 @@
-from jupyter_dash import JupyterDash
+"""from jupyter_dash import JupyterDash
 from dash import dcc, html, Input, Output
 
 import pandas as pd
@@ -12,7 +12,7 @@ from ipywidgets import interact, Dropdown, FloatRangeSlider
 from IPython.display import display
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA"""
 
 cities_weather_df = pd.read_csv('drive/MyDrive/data/CourseDatasets/cities.csv')
 countries_weather_df = pd.read_csv('drive/MyDrive/data/CourseDatasets/countries.csv')
