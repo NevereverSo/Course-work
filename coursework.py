@@ -139,8 +139,21 @@ if page == "📊 Исходные данные":
     # CATEGORY BAR -------------------------------------------------
     if graph_type == "Category Bar":
         col = st.selectbox("Категориальный признак:", cat_cols)
-        fig = px.bar(df_raw[col].value_counts().reset_index(),
-                     x="index", y=col)
+    
+        # Подсчет категорий
+        counts = df_raw[col].value_counts().reset_index()
+    
+        # Переименуем колонки
+        counts.columns = [col, "count"]
+    
+        # Корректный bar chart
+        fig = px.bar(
+            counts,
+            x=col,
+            y="count",
+            title=f"Распределение категорий: {col}"
+        )
+    
         st.plotly_chart(fig, use_container_width=True)
 
     # CORRELATION HEATMAP ------------------------------------------
