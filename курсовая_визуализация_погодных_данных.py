@@ -14,14 +14,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 
-"""### Загрузка датасетов"""
-
-drive.mount('/content/drive/',force_remount=True)
-
-!ls /content/drive/MyDrive/data/CourseDatasets
-
-"""### Создание соответствущих дата фреймов"""
-
 cities_weather_df = pd.read_csv('drive/MyDrive/data/CourseDatasets/cities.csv')
 countries_weather_df = pd.read_csv('drive/MyDrive/data/CourseDatasets/countries.csv')
 
