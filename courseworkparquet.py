@@ -62,7 +62,7 @@ daily_norm[num_cols_daily] = scaler.fit_transform(daily_weather_df[num_cols_dail
 # ----------------------------------------------------------
 page = st.sidebar.radio(
     "Навигация",
-    ["Исходные данные", "Анализ данных"]
+    ["📊 Исходные данные", "🧠 Анализ данных"]
 )
 
 st.sidebar.info("Weather Dashboard — Streamlit")
@@ -70,12 +70,12 @@ st.sidebar.info("Weather Dashboard — Streamlit")
 # ==========================================================
 # PAGE 1 — RAW DATA VISUALIZATION
 # ==========================================================
-if page == "Исходные данные":
+if page == "📊 Исходные данные":
 
-    st.title("Визуализация исходных данных")
+    st.title("📊 Визуализация исходных данных")
 
     st.header("Датасеты")
-    tab1, tab2, tab3 = st.tabs(["Countries", "Cities", "Daily Weather"])
+    tab1, tab2, tab3 = st.tabs(["🌍 Countries", "🏙 Cities", "☀ Daily Weather"])
 
     # TABLES -----------------------------------------------------
     with tab1:
@@ -90,8 +90,6 @@ if page == "Исходные данные":
 
     with tab3:
         st.subheader("Таблица данных — Daily Weather")
-        
-        # Показываем весь датасет без фильтрации по городу
         st.dataframe(daily_weather_df)
         st.write(daily_weather_df.describe(include="all"))
 
@@ -115,9 +113,9 @@ if page == "Исходные данные":
         cat_cols = cat_cols_daily
         time_series_allowed = True
         # Фильтр по городу
-        if "city" in df_raw.columns:
-            city = st.selectbox("Фильтр по городу:", df_raw["city"].unique())
-            df_raw = df_raw[df_raw["city"] == city]
+        if "city_name" in df_raw.columns:
+            city = st.selectbox("Выберите город для графика:", df_raw["city_name"].unique())
+            df_raw = df_raw[df_raw["city_name"] == city]
         # Преобразуем дату, если есть
         if "date" in df_raw.columns:
             df_raw["date"] = pd.to_datetime(df_raw["date"])
@@ -176,19 +174,18 @@ if page == "Исходные данные":
             df_ts,
             x="date",
             y=ts_col,
-            title=f"Временной ряд (столбцы): {ts_col}",
+            title=f"{ts_col} по времени для города {city}" if "city" in locals() else f"{ts_col} по времени",
             labels={ts_col: ts_col, "date": "Дата"}
         )
         
         st.plotly_chart(fig, use_container_width=True)
 
-
 # ==========================================================
 # PAGE 2 — ANALYSIS RESULTS (KMeans + Regression)
 # ==========================================================
-if page == "Анализ данных":
+if page == "🧠 Анализ данных":
 
-    st.title("Результаты анализа данных")
+    st.title("🧠 Результаты анализа данных")
 
     analysis_type = st.selectbox(
         "Выберите метод анализа:",
@@ -208,10 +205,10 @@ if page == "Анализ данных":
         df_norm = daily_norm
         df_raw = daily_weather_df
         num_cols = num_cols_daily
-        if "city" in df_raw.columns:
-            city = st.selectbox("Фильтр по городу:", df_raw["city"].unique())
-            df_raw = df_raw[df_raw["city"] == city]
-            df_norm = df_norm[df_norm["city"] == city]
+        if "city_name" in df_raw.columns:
+            city = st.selectbox("Выберите город для анализа:", df_raw["city_name"].unique())
+            df_raw = df_raw[df_raw["city_name"] == city]
+            df_norm = df_norm[df_norm["city_name"] == city]
 
     # --------------------------------------------------------------
     # K-MEANS CLUSTERING
