@@ -11,8 +11,6 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
-import os
-from kaggle.api.kaggle_api_extended import KaggleApi
 
 st.set_page_config(page_title="Weather Dashboard", layout="wide")
 
@@ -22,21 +20,9 @@ st.set_page_config(page_title="Weather Dashboard", layout="wide")
 
 @st.cache_data
 def load_data():
-    # CSV
     countries_weather_df = pd.read_csv("countries.csv")
     cities_weather_df = pd.read_csv("cities.csv")
-
-    # Parquet
-    parquet_file = "daily_weather.parquet"
-    if not os.path.exists(parquet_file):
-        st.info("Файл daily_weather.parquet не найден. Скачиваем с Kaggle...")
-        api = KaggleApi()
-        api.authenticate()
-        api.dataset_download_file("guillemservera/global-daily-climate-data",
-                                  "daily_weather.parquet", path=".")
-        st.success("Файл скачан!")
-
-    daily_weather_df = pd.read_parquet(parquet_file)
+    daily_weather_df = pd.read_csv("daily_weather_small.csv")
     return countries_weather_df, cities_weather_df, daily_weather_df
 
 countries_weather_df, cities_weather_df, daily_weather_df = load_data()
@@ -77,7 +63,7 @@ daily_norm[num_cols_daily] = scaler.fit_transform(daily_weather_df[num_cols_dail
 # ----------------------------------------------------------
 page = st.sidebar.radio(
     "Навигация",
-    ["📊 Исходные данные", "🧠 Анализ данных"]
+    ["Исходные данные", "Анализ данных"]
 )
 
 st.sidebar.info("Weather Dashboard — Streamlit")
@@ -85,12 +71,12 @@ st.sidebar.info("Weather Dashboard — Streamlit")
 # ==========================================================
 # PAGE 1 — RAW DATA VISUALIZATION
 # ==========================================================
-if page == "📊 Исходные данные":
+if page == "Исходные данные":
 
-    st.title("📊 Визуализация исходных данных")
+    st.title("Визуализация исходных данных")
 
     st.header("Датасеты")
-    tab1, tab2, tab3 = st.tabs(["🌍 Countries", "🏙 Cities", "☀ Daily Weather"])
+    tab1, tab2, tab3 = st.tabs(["Countries", "Cities", "Daily Weather"])
 
     # TABLES -----------------------------------------------------
     with tab1:
@@ -178,9 +164,9 @@ if page == "📊 Исходные данные":
 # ==========================================================
 # PAGE 2 — ANALYSIS RESULTS (KMeans + Regression)
 # ==========================================================
-if page == "🧠 Анализ данных":
+if page == "Анализ данных":
 
-    st.title("🧠 Результаты анализа данных")
+    st.title("Результаты анализа данных")
 
     analysis_type = st.selectbox(
         "Выберите метод анализа:",
