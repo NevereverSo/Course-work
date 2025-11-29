@@ -17,7 +17,6 @@ st.set_page_config(page_title="Weather Dashboard", layout="wide")
 # ----------------------------------------------------------
 # LOAD DATA
 # ----------------------------------------------------------
-
 @st.cache_data
 def load_data():
     countries_weather_df = pd.read_csv("countries.csv")
@@ -91,8 +90,13 @@ if page == "Исходные данные":
 
     with tab3:
         st.subheader("Таблица данных — Daily Weather")
-        city = st.selectbox("Выберите город:", daily_weather_df["city"].unique())
-        city_df = daily_weather_df[daily_weather_df["city"] == city]
+        if "city" in daily_weather_df.columns:
+            city = st.selectbox("Выберите город:", daily_weather_df["city"].unique())
+            city_df = daily_weather_df[daily_weather_df["city"] == city]
+        else:
+            st.warning("В CSV нет колонки 'city'. Отображается весь датасет.")
+            city_df = daily_weather_df
+
         st.dataframe(city_df)
         st.write(city_df.describe(include="all"))
 
@@ -104,22 +108,33 @@ if page == "Исходные данные":
         df_raw = countries_weather_df
         num_cols = num_cols_countries
         cat_cols = cat_cols_countries
+        time_series_allowed = False
     elif df_choice == "Cities":
         df_raw = cities_weather_df
         num_cols = num_cols_cities
         cat_cols = cat_cols_cities
+        time_series_allowed = False
     else:
         df_raw = daily_weather_df
         num_cols = num_cols_daily
         cat_cols = cat_cols_daily
-        city = st.selectbox("Фильтр по городу:", df_raw["city"].unique())
-        df_raw = df_raw[df_raw["city"] == city]
+        time_series_allowed = True
+        # Фильтр по городу
+        if "city" in df_raw.columns:
+            city = st.selectbox("Фильтр по городу:", df_raw["city"].unique())
+            df_raw = df_raw[df_raw["city"] == city]
+        # Преобразуем дату, если есть
         if "date" in df_raw.columns:
             df_raw["date"] = pd.to_datetime(df_raw["date"])
 
+    # Список графиков
+    graph_options = ["Histogram", "Boxplot", "Scatter plot", "Category Bar", "Correlation Heatmap"]
+    if time_series_allowed:
+        graph_options.append("Time Series")
+
     graph_type = st.selectbox(
         "Выберите тип графика",
-        ["Histogram", "Boxplot", "Scatter plot", "Category Bar", "Correlation Heatmap", "Time Series"]
+        graph_options
     )
 
     # HISTOGRAM ---------------------------------------------------
@@ -186,9 +201,10 @@ if page == "Анализ данных":
         df_norm = daily_norm
         df_raw = daily_weather_df
         num_cols = num_cols_daily
-        city = st.selectbox("Фильтр по городу:", df_raw["city"].unique())
-        df_raw = df_raw[df_raw["city"] == city]
-        df_norm = df_norm[df_norm["city"] == city]
+        if "city" in df_raw.columns:
+            city = st.selectbox("Фильтр по городу:", df_raw["city"].unique())
+            df_raw = df_raw[df_raw["city"] == city]
+            df_norm = df_norm[df_norm["city"] == city]
 
     # --------------------------------------------------------------
     # K-MEANS CLUSTERING
