@@ -220,25 +220,28 @@ if page == "🧠 Анализ данных":
         x = st.selectbox("X признак", num_cols)
         y = st.selectbox("Y признак", num_cols)
     
-        # Рассчитываем количество уникальных точек
-        max_clusters = min(10, df_norm[[x, y]].drop_duplicates().shape[0])
-        
-        if max_clusters < 2:
-            st.warning("Недостаточно уникальных данных для кластеризации.")
+        # Уникальные точки
+        n_unique_points = df_norm[[x, y]].drop_duplicates().shape[0]
+    
+        if n_unique_points < 1:
+            st.warning("Недостаточно данных для кластеризации.")
         else:
-            k = st.slider("Количество кластеров", 2, max_clusters, 3)
+            # Минимум 1, максимум — число уникальных точек
+            k = st.slider("Количество кластеров", 1, n_unique_points, min(3, n_unique_points))
+            
             model = KMeans(n_clusters=k)
             clusters = model.fit_predict(df_norm[[x, y]])
             df_raw["Cluster"] = clusters
     
             fig = px.scatter(
                 df_raw, x=x, y=y, color="Cluster",
-                title="Кластеры K-Means",
+                title=f"Кластеры K-Means (k={k})",
                 hover_data=df_raw.columns
             )
             st.plotly_chart(fig, use_container_width=True)
             st.subheader("Информация о кластерах")
             st.write(df_raw.groupby("Cluster")[num_cols].mean())
+
 
 
     # --------------------------------------------------------------
