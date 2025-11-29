@@ -29,9 +29,21 @@ st.set_page_config(page_title="Weather Dashboard", layout="wide")
 
 @st.cache_data
 def load_data():
+    # CSV
     countries_weather_df = pd.read_csv("countries.csv")
     cities_weather_df = pd.read_csv("cities.csv")
-    daily_weather_df = pd.read_parquet("daily_weather.parquet")
+
+    # Parquet
+    parquet_file = "daily_weather.parquet"
+    if not os.path.exists(parquet_file):
+        st.info("Файл daily_weather.parquet не найден. Скачиваем с Kaggle...")
+        api = KaggleApi()
+        api.authenticate()
+        api.dataset_download_file("guillemservera/global-daily-climate-data",
+                                  "daily_weather.parquet", path=".")
+        st.success("Файл скачан!")
+    daily_weather_df = pd.read_parquet(parquet_file)
+
     return countries_weather_df, cities_weather_df, daily_weather_df
 
 countries_weather_df, cities_weather_df, daily_weather_df = load_data()
