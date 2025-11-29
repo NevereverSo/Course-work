@@ -215,20 +215,31 @@ if page == "🧠 Анализ данных":
     # --------------------------------------------------------------
     if analysis_type == "Clustering (K-Means)":
         st.header("Кластеризация K-Means")
-        k = st.slider("Количество кластеров", 2, 10, 3)
+    
+        # Выбор признаков
         x = st.selectbox("X признак", num_cols)
         y = st.selectbox("Y признак", num_cols)
-        model = KMeans(n_clusters=k)
-        clusters = model.fit_predict(df_norm[[x, y]])
-        df_raw["Cluster"] = clusters
-        fig = px.scatter(
-            df_raw, x=x, y=y, color="Cluster",
-            title="Кластеры K-Means",
-            hover_data=df_raw.columns
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        st.subheader("Информация о кластерах")
-        st.write(df_raw.groupby("Cluster")[num_cols].mean())
+    
+        # Рассчитываем количество уникальных точек
+        max_clusters = min(10, df_norm[[x, y]].drop_duplicates().shape[0])
+        
+        if max_clusters < 2:
+            st.warning("Недостаточно уникальных данных для кластеризации.")
+        else:
+            k = st.slider("Количество кластеров", 2, max_clusters, 3)
+            model = KMeans(n_clusters=k)
+            clusters = model.fit_predict(df_norm[[x, y]])
+            df_raw["Cluster"] = clusters
+    
+            fig = px.scatter(
+                df_raw, x=x, y=y, color="Cluster",
+                title="Кластеры K-Means",
+                hover_data=df_raw.columns
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.subheader("Информация о кластерах")
+            st.write(df_raw.groupby("Cluster")[num_cols].mean())
+
 
     # --------------------------------------------------------------
     # LINEAR REGRESSION
