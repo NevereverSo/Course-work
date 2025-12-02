@@ -21,7 +21,7 @@ st.set_page_config(page_title="Weather Dashboard", layout="wide")
 def load_data():
     countries_weather_df = pd.read_csv("countries.csv")
     cities_weather_df = pd.read_csv("cities.csv")
-    daily_weather_df = pd.read_csv("daily_weather_small.csv")
+    daily_weather_df = pd.read_csv("daily_weather_smallest.csv")
     return countries_weather_df, cities_weather_df, daily_weather_df
 
 countries_weather_df, cities_weather_df, daily_weather_df = load_data()
