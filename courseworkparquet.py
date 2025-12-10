@@ -32,7 +32,7 @@ countries_weather_df, cities_weather_df, daily_weather_df = load_data()
 for df in [countries_weather_df, cities_weather_df, daily_weather_df]:
     df.drop_duplicates(inplace=True)
     df.dropna(inplace=True)
-daily_weather_df.drop(station_id)
+daily_weather_df.drop('station_id', axis=1)
 # ----------------------------------------------------------
 # PREPARE COLUMNS
 # ----------------------------------------------------------
