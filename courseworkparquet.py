@@ -91,8 +91,8 @@ if page == "Исходные данные":
 
     with tab3:
         st.subheader("Таблица данных — Daily Weather")
-        st.dataframe(daily_weather_df)
-        st.write(daily_weather_df.describe(include="all"))
+        st.dataframe(daily_norm)
+        st.write(daily_norm.describe(include="all"))
 
     # VISUALIZATION CONTROLS -------------------------------------
     st.header("Графики")
@@ -109,7 +109,7 @@ if page == "Исходные данные":
         cat_cols = cat_cols_cities
         time_series_allowed = False
     else:
-        df_raw = daily_weather_df
+        df_raw = daily_norm
         num_cols = num_cols_daily
         cat_cols = cat_cols_daily
         time_series_allowed = True
