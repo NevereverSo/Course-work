@@ -32,7 +32,6 @@ countries_weather_df, cities_weather_df, daily_weather_df = load_data()
 for df in [countries_weather_df, cities_weather_df, daily_weather_df]:
     df.drop_duplicates(inplace=True)
     df.dropna(inplace=True)
-daily_weather_df.drop('station_id', axis=1)
 # ----------------------------------------------------------
 # PREPARE COLUMNS
 # ----------------------------------------------------------
@@ -52,6 +51,8 @@ scaler = StandardScaler()
 countries_norm = countries_weather_df.copy()
 cities_norm = cities_weather_df.copy()
 daily_norm = daily_weather_df.copy()
+
+daily_norm = daily_norm.drop('station_id', axis=1)
 
 countries_norm[num_cols_countries] = scaler.fit_transform(countries_weather_df[num_cols_countries])
 cities_norm[num_cols_cities] = scaler.fit_transform(cities_weather_df[num_cols_cities])
