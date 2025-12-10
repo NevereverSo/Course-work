@@ -35,13 +35,16 @@ for df in [countries_weather_df, cities_weather_df, daily_weather_df]:
 # ----------------------------------------------------------
 # PREPARE COLUMNS
 # ----------------------------------------------------------
+daily_norm = daily_weather_df.copy()
+daily_norm = daily_norm.drop('station_id', axis=1)
+
 num_cols_countries = countries_weather_df.select_dtypes(include="number").columns
 num_cols_cities = cities_weather_df.select_dtypes(include="number").columns
-num_cols_daily = daily_weather_df.select_dtypes(include="number").columns
+num_cols_daily = daily_norm.select_dtypes(include="number").columns
 
 cat_cols_countries = countries_weather_df.select_dtypes(exclude="number").columns
 cat_cols_cities = cities_weather_df.select_dtypes(exclude="number").columns
-cat_cols_daily = daily_weather_df.select_dtypes(exclude="number").columns
+cat_cols_daily = daily_norm.select_dtypes(exclude="number").columns
 
 # ----------------------------------------------------------
 # NORMALIZATION
@@ -50,9 +53,7 @@ scaler = StandardScaler()
 
 countries_norm = countries_weather_df.copy()
 cities_norm = cities_weather_df.copy()
-daily_norm = daily_weather_df.copy()
 
-daily_norm = daily_norm.drop('station_id', axis=1)
 
 countries_norm[num_cols_countries] = scaler.fit_transform(countries_weather_df[num_cols_countries])
 cities_norm[num_cols_cities] = scaler.fit_transform(cities_weather_df[num_cols_cities])
@@ -109,7 +110,7 @@ if page == "Исходные данные":
         cat_cols = cat_cols_cities
         time_series_allowed = False
     else:
-        df_raw = daily_norm
+        df_raw = daily_weather_df
         num_cols = num_cols_daily
         cat_cols = cat_cols_daily
         time_series_allowed = True
