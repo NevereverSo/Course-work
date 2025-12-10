@@ -93,7 +93,7 @@ if page == "Исходные данные":
     with tab3:
         st.subheader("Таблица данных — Daily Weather")
         st.dataframe(daily_weather_df)
-        st.write(daily_norm.describe(include="all"))
+        st.write(daily_weather_df.describe(include="all"))
 
     # VISUALIZATION CONTROLS -------------------------------------
     st.header("Графики")
