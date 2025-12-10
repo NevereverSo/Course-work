@@ -38,7 +38,7 @@ for df in [countries_weather_df, cities_weather_df, daily_weather_df]:
 # ----------------------------------------------------------
 num_cols_countries = countries_weather_df.select_dtypes(include="number").columns
 num_cols_cities = cities_weather_df.select_dtypes(include="number").columns
-num_cols_daily = daily_weather_df.select_dtypes(include="number").columns
+num_cols_daily = daily_weather_df.select_dtypes(include="number", exclude="station_id").columns
 
 cat_cols_countries = countries_weather_df.select_dtypes(exclude="number").columns
 cat_cols_cities = cities_weather_df.select_dtypes(exclude="number").columns
