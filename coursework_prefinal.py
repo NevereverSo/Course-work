@@ -1,5 +1,5 @@
 # ----------------------------------------------------------
-# app.py — Streamlit Dashboard for Weather Data (Simplified)
+# app.py — Оптимизированный Streamlit Dashboard для Weather Data
 # ----------------------------------------------------------
 
 import streamlit as st
@@ -7,172 +7,69 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import seaborn as sns
-import matplotlib.pyplot as plt
-from datetime import datetime
-
-# ML libraries
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans, DBSCAN
-from sklearn.linear_model import LinearRegression, Ridge, Lasso
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import silhouette_score, r2_score, mean_absolute_error
-from sklearn.decomposition import PCA
-from sklearn.model_selection import train_test_split
 import warnings
 warnings.filterwarnings('ignore')
 
+# ML библиотеки
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import silhouette_score, r2_score, mean_absolute_error
+from sklearn.decomposition import PCA
+
 st.set_page_config(
     page_title="Weather Analytics Dashboard", 
-    layout="wide",
-    page_icon="🌤️"
+    layout="wide"
 )
 
 # ----------------------------------------------------------
-# LOAD DATA
+# LOAD AND CACHE DATA
 # ----------------------------------------------------------
-@st.cache_data
+@st.cache_data(ttl=3600)
 def load_data():
-    # Проверяем наличие файлов
-    import os
+    """Загрузка и предобработка данных с кэшированием"""
+    try:
+        countries_df = pd.read_csv("countries.csv")
+    except:
+        countries_df = pd.DataFrame()
     
-    # Список возможных имен файлов
-    files_to_try = {
-        'countries': ['countries.csv', 'countries_weather.csv'],
-        'cities': ['cities.csv', 'cities_weather.csv'],
-        'daily': ['daily_weather_smallest.csv', 'daily_weather.csv']
-    }
+    try:
+        cities_df = pd.read_csv("cities.csv")
+    except:
+        cities_df = pd.DataFrame()
     
-    dataframes = {}
+    try:
+        daily_df = pd.read_csv("daily_weather_smallest.csv")
+        if 'date' in daily_df.columns:
+            daily_df['date'] = pd.to_datetime(daily_df['date'], errors='coerce')
+            # Добавляем только базовые временные признаки для оптимизации
+            daily_df['month'] = daily_df['date'].dt.month
+    except:
+        daily_df = pd.DataFrame()
     
-    for name, filenames in files_to_try.items():
-        df = None
-        for filename in filenames:
-            try:
-                if os.path.exists(filename):
-                    df = pd.read_csv(filename)
-                    break
-            except:
-                continue
-        
-        if df is None:
-            # Создаем пустой датафрейм если файл не найден
-            df = pd.DataFrame()
-        
-        dataframes[name] = df
-    
-    return dataframes['countries'], dataframes['cities'], dataframes['daily']
+    return countries_df, cities_df, daily_df
 
-countries_weather_df, cities_weather_df, daily_weather_df = load_data()
-
-# ----------------------------------------------------------
-# DATA PREPROCESSING
-# ----------------------------------------------------------
-def preprocess_dataframes():
-    """Предобработка всех датафреймов"""
-    processed_dfs = []
-    
-    for df, name in zip([countries_weather_df, cities_weather_df, daily_weather_df], 
-                        ['countries', 'cities', 'daily']):
-        if df.empty:
-            processed_dfs.append(df)
-            continue
-            
-        df_clean = df.copy()
-        
-        # Удаление дубликатов
-        df_clean.drop_duplicates(inplace=True)
-        
-        # Для daily weather добавляем временные признаки
-        if name == 'daily' and not df_clean.empty:
-            if 'date' in df_clean.columns:
-                try:
-                    df_clean['date'] = pd.to_datetime(df_clean['date'])
-                    df_clean['year'] = df_clean['date'].dt.year
-                    df_clean['month'] = df_clean['date'].dt.month
-                    df_clean['day'] = df_clean['date'].dt.day
-                    
-                    # Сезоны
-                    df_clean['season'] = df_clean['month'] % 12 // 3 + 1
-                    season_map = {1: 'Winter', 2: 'Spring', 3: 'Summer', 4: 'Fall'}
-                    df_clean['season_name'] = df_clean['season'].map(season_map)
-                except:
-                    pass
-        
-        processed_dfs.append(df_clean)
-    
-    return processed_dfs
-
-countries_weather_df, cities_weather_df, daily_weather_df = preprocess_dataframes()
-
-# ----------------------------------------------------------
-# HELPER FUNCTIONS
-# ----------------------------------------------------------
-def calculate_autocorrelation(series, max_lags=50):
-    """Вычисляет автокорреляцию без statsmodels"""
-    if len(series) < 2:
-        return []
-    
-    series_clean = series.dropna()
-    if len(series_clean) < 2:
-        return []
-    
-    autocorr = []
-    n = len(series_clean)
-    mean = series_clean.mean()
-    var = series_clean.var()
-    
-    if var == 0:
-        return [0] * min(max_lags, n-1)
-    
-    max_lags = min(max_lags, n-1)
-    
-    for lag in range(1, max_lags + 1):
-        if lag < n:
-            numerator = ((series_clean - mean) * (series_clean.shift(lag) - mean)).sum()
-            denominator = (n - lag) * var
-            autocorr.append(numerator / denominator if denominator != 0 else 0)
-        else:
-            autocorr.append(0)
-    
-    return autocorr
+# Загрузка данных
+countries_df, cities_df, daily_df = load_data()
 
 # ----------------------------------------------------------
 # SIDEBAR
 # ----------------------------------------------------------
-st.sidebar.title("🌤️ Weather Analytics")
-st.sidebar.markdown("---")
+st.sidebar.title("Weather Analytics")
 
-# Показать информацию о загруженных данных
-st.sidebar.subheader("Загруженные данные")
-if not countries_weather_df.empty:
-    st.sidebar.info(f"🌍 Countries: {len(countries_weather_df)} записей")
-if not cities_weather_df.empty:
-    st.sidebar.info(f"🏙️ Cities: {len(cities_weather_df)} записей")
-if not daily_weather_df.empty:
-    st.sidebar.info(f"📅 Daily: {len(daily_weather_df)} записей")
-
-# Навигация - только 2 страницы
+# Навигация
 page = st.sidebar.radio(
     "Навигация",
-    ["📊 Визуализация данных", "🔍 Анализ данных"]
+    ["Визуализация данных", "Анализ данных"]
 )
 
-st.sidebar.markdown("---")
-
 # Глобальные фильтры
-if not daily_weather_df.empty and 'date' in daily_weather_df.columns:
+if not daily_df.empty and 'date' in daily_df.columns:
     st.sidebar.header("Фильтры")
     
-    # Фильтр по дате
     try:
-        min_date = daily_weather_df['date'].min()
-        max_date = daily_weather_df['date'].max()
-        
-        if isinstance(min_date, str):
-            min_date = pd.to_datetime(min_date)
-        if isinstance(max_date, str):
-            max_date = pd.to_datetime(max_date)
+        min_date = daily_df['date'].min()
+        max_date = daily_df['date'].max()
         
         date_range = st.sidebar.date_input(
             "Диапазон дат:",
@@ -183,696 +80,343 @@ if not daily_weather_df.empty and 'date' in daily_weather_df.columns:
     except:
         pass
 
-st.sidebar.markdown("---")
-st.sidebar.info("""
-**Инструкция:**
-1. Выберите страницу навигации
-2. Используйте фильтры для настройки
-3. Взаимодействуйте с графиками
-""")
-
 # ==========================================================
-# PAGE 1 — RAW DATA VISUALIZATION
+# PAGE 1 — ВИЗУАЛИЗАЦИЯ ДАННЫХ
 # ==========================================================
-if page == "📊 Визуализация данных":
+if page == "Визуализация данных":
     
-    st.title("📊 Визуализация погодных данных")
+    st.title("Визуализация погодных данных")
     
-    # Проверка наличия данных
-    if daily_weather_df.empty and cities_weather_df.empty and countries_weather_df.empty:
-        st.error("❌ Данные не загружены. Убедитесь, что CSV файлы находятся в корневой папке.")
-        st.info("""
-        Необходимые файлы:
-        - `countries.csv` или `countries_weather.csv`
-        - `cities.csv` или `cities_weather.csv`
-        - `daily_weather_smallest.csv` или `daily_weather.csv`
-        """)
+    # Быстрые KPI
+    if not daily_df.empty:
+        col1, col2, col3, col4 = st.columns(4)
         
-        # Создание демо данных для тестирования
-        if st.button("Создать демо-данные для тестирования"):
-            # Демо данные для countries
-            demo_countries = pd.DataFrame({
-                'country': ['USA', 'Canada', 'UK', 'Germany', 'France'],
-                'avg_temp': [15.5, 5.2, 10.1, 9.8, 12.3],
-                'avg_precipitation': [800, 900, 1100, 700, 750],
-                'elevation': [500, 1000, 200, 300, 400]
-            })
-            
-            # Демо данные для cities
-            demo_cities = pd.DataFrame({
-                'city_name': ['New York', 'Toronto', 'London', 'Berlin', 'Paris'],
-                'country': ['USA', 'Canada', 'UK', 'Germany', 'France'],
-                'latitude': [40.7128, 43.6532, 51.5074, 52.5200, 48.8566],
-                'longitude': [-74.0060, -79.3832, -0.1278, 13.4050, 2.3522],
-                'population': [8419000, 2930000, 8982000, 3769000, 2148000]
-            })
-            
-            # Демо данные для daily weather
-            dates = pd.date_range(start='2023-01-01', end='2023-12-31', freq='D')
-            demo_daily = pd.DataFrame({
-                'date': dates,
-                'city_name': np.random.choice(['New York', 'Toronto', 'London'], len(dates)),
-                'temperature': np.random.normal(15, 5, len(dates)),
-                'precipitation': np.random.exponential(2, len(dates)),
-                'humidity': np.random.uniform(40, 90, len(dates)),
-                'wind_speed': np.random.exponential(5, len(dates))
-            })
-            
-            countries_weather_df = demo_countries
-            cities_weather_df = demo_cities
-            daily_weather_df = demo_daily
-            
-            st.success("✅ Демо-данные созданы! Обновите страницу.")
+        with col1:
+            if 'city_name' in daily_df.columns:
+                st.metric("Городов", daily_df['city_name'].nunique())
+            else:
+                st.metric("Записей", len(daily_df))
+        
+        with col2:
+            if 'date' in daily_df.columns:
+                st.metric("Период", f"{len(daily_df['date'].dt.date.unique())} дней")
+        
+        with col3:
+            numeric_cols = daily_df.select_dtypes(include=[np.number]).columns
+            st.metric("Признаков", len(numeric_cols))
+        
+        with col4:
+            missing = daily_df.isnull().sum().sum()
+            st.metric("Пропусков", missing)
     
-    else:
-        # KPI Cards
-        st.subheader("📈 Ключевые показатели")
+    # Вкладки
+    tab1, tab2, tab3 = st.tabs(["Данные", "Графики", "Карта"])
+    
+    with tab1:
+        st.header("Просмотр данных")
         
-        # Создаем колонки для KPI
-        if not daily_weather_df.empty:
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                if 'city_name' in daily_weather_df.columns:
-                    num_cities = daily_weather_df['city_name'].nunique()
-                    st.metric("Количество городов", num_cities)
-                else:
-                    st.metric("Всего записей", len(daily_weather_df))
-            
-            with col2:
-                if 'date' in daily_weather_df.columns:
-                    date_range_str = f"{daily_weather_df['date'].min()} - {daily_weather_df['date'].max()}"
-                    st.metric("Диапазон дат", date_range_str[:20] + "..." if len(date_range_str) > 20 else date_range_str)
-                else:
-                    st.metric("Числовых признаков", len(daily_weather_df.select_dtypes(include=[np.number]).columns))
-            
-            with col3:
-                numeric_cols = daily_weather_df.select_dtypes(include=[np.number]).columns
-                st.metric("Числовых признаков", len(numeric_cols))
-            
-            with col4:
-                missing_total = daily_weather_df.isnull().sum().sum()
-                st.metric("Пропущенных значений", missing_total)
+        dataset_choice = st.selectbox(
+            "Выберите датасет:",
+            ["Ежедневные данные", "Города", "Страны"]
+        )
         
-        # Tabs
-        tab1, tab2, tab3 = st.tabs(["📋 Данные", "📊 Графики", "🌍 Карта"])
-        
-        with tab1:
-            st.header("Просмотр данных")
+        if dataset_choice == "Ежедневные данные" and not daily_df.empty:
+            df_display = daily_df
             
-            dataset_choice = st.selectbox(
-                "Выберите датасет:",
-                ["Ежедневные данные", "Города", "Страны"]
+            # Быстрый фильтр по городу
+            if 'city_name' in daily_df.columns:
+                cities = daily_df['city_name'].unique().tolist()
+                selected_city = st.selectbox("Фильтр по городу:", ['Все'] + cities[:20])
+                if selected_city != 'Все':
+                    df_display = df_display[df_display['city_name'] == selected_city]
+            
+            # Быстрый фильтр по дате
+            if 'date' in df_display.columns:
+                dates = df_display['date'].dt.date.unique()
+                if len(dates) > 0:
+                    min_date, max_date = dates.min(), dates.max()
+                    selected_date = st.date_input(
+                        "Фильтр по дате:",
+                        value=min_date,
+                        min_value=min_date,
+                        max_value=max_date
+                    )
+                    df_display = df_display[df_display['date'].dt.date == selected_date]
+        
+        elif dataset_choice == "Города" and not cities_df.empty:
+            df_display = cities_df
+        elif dataset_choice == "Страны" and not countries_df.empty:
+            df_display = countries_df
+        else:
+            st.warning("Данный датасет не загружен")
+            df_display = pd.DataFrame()
+        
+        if not df_display.empty:
+            # Отображение таблицы с пагинацией
+            rows_per_page = st.selectbox("Строк на странице:", [50, 100, 200], index=0)
+            page_num = st.number_input("Страница:", min_value=1, value=1)
+            
+            start_idx = (page_num - 1) * rows_per_page
+            end_idx = start_idx + rows_per_page
+            
+            st.dataframe(
+                df_display.iloc[start_idx:end_idx],
+                width='stretch',
+                height=400
             )
             
-            if dataset_choice == "Ежедневные данные" and not daily_weather_df.empty:
-                df_display = daily_weather_df
-            elif dataset_choice == "Города" and not cities_weather_df.empty:
-                df_display = cities_weather_df
-            elif dataset_choice == "Страны" and not countries_weather_df.empty:
-                df_display = countries_weather_df
-            else:
-                st.warning("Данный датасет не загружен")
-                df_display = pd.DataFrame()
-            
-            if not df_display.empty:
-                # Поиск
-                search_col1, search_col2 = st.columns([2, 1])
-                with search_col1:
-                    search_term = st.text_input("Поиск по таблице:", "")
-                
-                with search_col2:
-                    rows_per_page = st.selectbox("Строк на странице:", [10, 25, 50, 100], index=0)
-                
-                # Применение поиска
-                if search_term:
-                    mask = df_display.apply(
-                        lambda row: row.astype(str).str.contains(search_term, case=False, na=False).any(),
-                        axis=1
-                    )
-                    df_filtered = df_display[mask]
-                else:
-                    df_filtered = df_display
-                
-                # Пагинация
-                total_pages = max(1, len(df_filtered) // rows_per_page + (1 if len(df_filtered) % rows_per_page > 0 else 0))
-                page_number = st.number_input("Страница:", min_value=1, max_value=total_pages, value=1)
-                
-                start_idx = (page_number - 1) * rows_per_page
-                end_idx = min(start_idx + rows_per_page, len(df_filtered))
-                
-                # Отображение
-                st.dataframe(
-                    df_filtered.iloc[start_idx:end_idx],
-                    use_container_width=True,
-                    height=400
-                )
-                
-                st.caption(f"Показано {start_idx+1}-{end_idx} из {len(df_filtered)} записей")
-                
-                # Статистика
-                if st.checkbox("Показать статистику"):
-                    numeric_cols = df_display.select_dtypes(include=[np.number]).columns
-                    if len(numeric_cols) > 0:
-                        st.subheader("Статистика числовых признаков")
-                        st.dataframe(df_display[numeric_cols].describe())
+            # Быстрая статистика
+            if st.checkbox("Показать статистику", value=False):
+                numeric_cols = df_display.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) > 0:
+                    st.dataframe(df_display[numeric_cols].describe(), width='stretch')
+    
+    with tab2:
+        st.header("Визуализация данных")
         
-        with tab2:
-            st.header("Визуализация данных")
+        if not daily_df.empty:
+            # Быстрый выбор типа графика и данных
+            col1, col2 = st.columns(2)
             
-            if not daily_weather_df.empty:
-                # Выбор типа графика
+            with col1:
                 chart_type = st.selectbox(
                     "Тип графика:",
-                    ["Гистограмма", "Box Plot", "Scatter Plot", "Линейный график", "Heatmap корреляций"]
+                    ["Гистограмма", "Box Plot", "Scatter Plot", "Линейный график"]
                 )
-                
-                numeric_cols = daily_weather_df.select_dtypes(include=[np.number]).columns.tolist()
-                
-                if chart_type == "Гистограмма":
-                    col_selected = st.selectbox("Выберите колонку:", numeric_cols)
-                    fig = px.histogram(daily_weather_df, x=col_selected, nbins=50,
-                                      title=f"Распределение {col_selected}")
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                elif chart_type == "Box Plot":
-                    col_selected = st.selectbox("Выберите колонку:", numeric_cols)
-                    fig = px.box(daily_weather_df, y=col_selected, title=f"Box Plot: {col_selected}")
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                elif chart_type == "Scatter Plot":
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        x_col = st.selectbox("X ось:", numeric_cols)
-                    with col2:
-                        y_col = st.selectbox("Y ось:", numeric_cols)
-                    
-                    color_by = None
-                    if 'city_name' in daily_weather_df.columns:
-                        color_by = st.selectbox("Цвет по:", ['Нет'] + ['city_name'])
-                        color_by = None if color_by == 'Нет' else color_by
-                    
-                    fig = px.scatter(daily_weather_df, x=x_col, y=y_col, color=color_by,
-                                    title=f"{y_col} vs {x_col}")
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                elif chart_type == "Линейный график":
-                    if 'date' in daily_weather_df.columns:
-                        # Выбор города для фильтрации
-                        if 'city_name' in daily_weather_df.columns:
-                            city_filter = st.selectbox("Выберите город:", 
-                                                      ['Все'] + daily_weather_df['city_name'].unique().tolist())
-                            if city_filter != 'Все':
-                                df_chart = daily_weather_df[daily_weather_df['city_name'] == city_filter]
-                            else:
-                                df_chart = daily_weather_df
-                        else:
-                            df_chart = daily_weather_df
-                        
-                        # Выбор переменной
-                        y_col = st.selectbox("Выберите переменную:", numeric_cols)
-                        
-                        # Агрегация по дате
-                        df_agg = df_chart.groupby('date')[y_col].mean().reset_index()
-                        
-                        fig = px.line(df_agg, x='date', y=y_col,
-                                     title=f"{y_col} по времени")
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.warning("Для линейного графика нужна колонка с датами")
-                
-                elif chart_type == "Heatmap корреляций":
-                    if len(numeric_cols) > 1:
-                        corr_matrix = daily_weather_df[numeric_cols].corr()
-                        
-                        fig = px.imshow(corr_matrix,
-                                       text_auto=True,
-                                       aspect="auto",
-                                       title="Матрица корреляций",
-                                       color_continuous_scale='RdBu_r')
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Топ корреляции
-                        st.subheader("Наиболее сильные корреляции")
-                        corr_pairs = []
-                        for i in range(len(corr_matrix.columns)):
-                            for j in range(i+1, len(corr_matrix.columns)):
-                                corr = corr_matrix.iloc[i, j]
-                                if abs(corr) > 0.5:
-                                    corr_pairs.append({
-                                        'Признак 1': corr_matrix.columns[i],
-                                        'Признак 2': corr_matrix.columns[j],
-                                        'Корреляция': corr
-                                    })
-                        
-                        if corr_pairs:
-                            corr_df = pd.DataFrame(corr_pairs)
-                            st.dataframe(corr_df.sort_values('Корреляция', key=abs, ascending=False))
-                        else:
-                            st.info("Сильных корреляций (|r| > 0.5) не найдено")
-        
-        with tab3:
-            st.header("Географическая визуализация")
             
-            if not cities_weather_df.empty and 'latitude' in cities_weather_df.columns and 'longitude' in cities_weather_df.columns:
-                # Выбор атрибута для цветового кодирования
-                numeric_cols_cities = cities_weather_df.select_dtypes(include=[np.number]).columns.tolist()
-                
-                color_attribute = st.selectbox(
-                    "Цвет по атрибуту:",
-                    ['Нет'] + numeric_cols_cities
-                )
-                
-                size_attribute = st.selectbox(
-                    "Размер по атрибуту:",
-                    ['Нет'] + numeric_cols_cities
-                )
-                
-                # Подготовка данных для карты
-                map_data = cities_weather_df.copy()
-                
-                # Создание карты
-                if color_attribute != 'Нет':
-                    fig = px.scatter_geo(map_data,
-                                        lat='latitude',
-                                        lon='longitude',
-                                        color=color_attribute,
-                                        size=size_attribute if size_attribute != 'Нет' else None,
-                                        hover_name='city_name' if 'city_name' in map_data.columns else None,
-                                        title='Распределение городов',
-                                        projection='natural earth')
+            with col2:
+                numeric_cols = daily_df.select_dtypes(include=[np.number]).columns.tolist()
+                if chart_type == "Scatter Plot":
+                    x_col = st.selectbox("X:", numeric_cols[:5])
+                    y_col = st.selectbox("Y:", numeric_cols[:5])
                 else:
-                    fig = px.scatter_geo(map_data,
-                                        lat='latitude',
-                                        lon='longitude',
-                                        size=size_attribute if size_attribute != 'Нет' else None,
-                                        hover_name='city_name' if 'city_name' in map_data.columns else None,
-                                        title='Распределение городов',
-                                        projection='natural earth')
+                    col_selected = st.selectbox("Колонка:", numeric_cols[:10])
+            
+            # Быстрое создание графиков
+            if chart_type == "Гистограмма":
+                fig = px.histogram(daily_df, x=col_selected, nbins=30)
+                st.plotly_chart(fig, width='stretch', use_container_width=True)
+            
+            elif chart_type == "Box Plot":
+                fig = px.box(daily_df, y=col_selected)
+                st.plotly_chart(fig, width='stretch', use_container_width=True)
+            
+            elif chart_type == "Scatter Plot":
+                fig = px.scatter(daily_df, x=x_col, y=y_col, opacity=0.5)
+                st.plotly_chart(fig, width='stretch', use_container_width=True)
+            
+            elif chart_type == "Линейный график" and 'date' in daily_df.columns:
+                # Агрегация для скорости
+                sample_df = daily_df.copy()
+                if len(sample_df) > 10000:
+                    sample_df = sample_df.sample(10000)
                 
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Для географической визуализации нужны данные с координатами (latitude, longitude)")
+                # Группировка по дате
+                agg_df = sample_df.groupby('date')[col_selected].mean().reset_index()
+                fig = px.line(agg_df, x='date', y=col_selected)
+                st.plotly_chart(fig, width='stretch', use_container_width=True)
+            
+            # Быстрая корреляционная матрица
+            if st.checkbox("Показать корреляционную матрицу", value=False):
+                if len(numeric_cols) > 1:
+                    # Используем только числовые колонки
+                    corr_data = daily_df[numeric_cols].corr()
+                    
+                    # Ограничиваем размер для скорости
+                    if len(corr_data) > 10:
+                        corr_data = corr_data.iloc[:10, :10]
+                    
+                    fig = px.imshow(corr_data, text_auto=True, aspect="auto")
+                    st.plotly_chart(fig, width='stretch', use_container_width=True)
+    
+    with tab3:
+        st.header("Географическая визуализация")
+        
+        if not cities_df.empty and 'latitude' in cities_df.columns and 'longitude' in cities_df.columns:
+            # Простая карта без сложных опций
+            fig = px.scatter_geo(
+                cities_df,
+                lat='latitude',
+                lon='longitude',
+                hover_name='city_name' if 'city_name' in cities_df.columns else None,
+                title='Распределение городов'
+            )
+            st.plotly_chart(fig, width='stretch', use_container_width=True)
 
 # ==========================================================
-# PAGE 2 — ANALYSIS
+# PAGE 2 — АНАЛИЗ ДАННЫХ
 # ==========================================================
 else:
     
-    st.title("🔍 Анализ погодных данных")
+    st.title("Анализ погодных данных")
     
-    # Выбор метода анализа
-    analysis_method = st.selectbox(
-        "Метод анализа:",
-        ["Кластеризация", "Регрессия", "Временные ряды", "Анализ главных компонент (PCA)"]
-    )
-    
-    # Используем только daily_weather_df для анализа
-    if daily_weather_df.empty:
-        st.error("Для анализа нужны данные. Загрузите daily_weather.csv")
+    # Используем только daily_df для анализа
+    if daily_df.empty:
+        st.error("Для анализа нужны ежедневные данные")
     else:
-        # Предобработка данных для анализа
-        df_analysis = daily_weather_df.copy()
-        
-        # Выбор числовых колонок
+        # Быстрая предобработка
+        df_analysis = daily_df.copy()
         numeric_cols = df_analysis.select_dtypes(include=[np.number]).columns.tolist()
         
         if not numeric_cols:
             st.error("Нет числовых колонок для анализа")
         else:
-            # Стандартизация
+            # Выбор метода анализа
+            analysis_method = st.selectbox(
+                "Метод анализа:",
+                ["Кластеризация", "Регрессия", "PCA"]
+            )
+            
+            # Быстрая стандартизация
             scaler = StandardScaler()
-            df_scaled = df_analysis.copy()
-            df_scaled[numeric_cols] = scaler.fit_transform(df_analysis[numeric_cols].fillna(0))
+            df_numeric = df_analysis[numeric_cols].fillna(0)
+            if len(df_numeric) > 0:
+                df_scaled_numeric = scaler.fit_transform(df_numeric)
+                df_scaled = pd.DataFrame(df_scaled_numeric, columns=numeric_cols)
+            else:
+                df_scaled = pd.DataFrame()
             
             # ========== КЛАСТЕРИЗАЦИЯ ==========
             if analysis_method == "Кластеризация":
-                st.header("Кластеризация данных")
+                st.header("Кластеризация K-Means")
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Выбор признаков
+                    # Ограничиваем выбор признаков для скорости
                     features = st.multiselect(
-                        "Выберите признаки для кластеризации:",
-                        numeric_cols,
+                        "Признаки:",
+                        numeric_cols[:8],  # Только первые 8 для скорости
                         default=numeric_cols[:2] if len(numeric_cols) >= 2 else numeric_cols
                     )
                 
                 with col2:
-                    # Выбор алгоритма
-                    algorithm = st.selectbox("Алгоритм:", ["K-Means", "DBSCAN"])
-                    
-                    if algorithm == "K-Means":
-                        n_clusters = st.slider("Количество кластеров:", 2, 10, 3)
-                    else:
-                        eps_value = st.slider("EPS:", 0.1, 2.0, 0.5, 0.1)
-                        min_samples_value = st.slider("Минимум образцов:", 1, 20, 5)
+                    n_clusters = st.slider("Кластеров:", 2, 8, 3)
                 
                 if len(features) >= 2:
-                    # Подготовка данных
-                    X = df_scaled[features].fillna(0)
-                    
-                    if algorithm == "K-Means":
-                        # K-Means кластеризация
-                        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                        clusters = kmeans.fit_predict(X)
-                        
-                        # Метрики
-                        inertia = kmeans.inertia_
-                        try:
-                            silhouette = silhouette_score(X, clusters)
-                        except:
-                            silhouette = None
-                        
-                        # Отображение метрик
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Количество кластеров", n_clusters)
-                        with col2:
-                            st.metric("Inertia", f"{inertia:.2f}")
-                        with col3:
-                            if silhouette:
-                                st.metric("Silhouette Score", f"{silhouette:.3f}")
-                            else:
-                                st.metric("Silhouette Score", "N/A")
-                        
-                        centers = kmeans.cluster_centers_
-                        
+                    # Ограничиваем данные для скорости
+                    X = df_scaled[features]
+                    if len(X) > 5000:
+                        X_sample = X.sample(5000, random_state=42)
                     else:
-                        # DBSCAN кластеризация
-                        dbscan = DBSCAN(eps=eps_value, min_samples=min_samples_value)
-                        clusters = dbscan.fit_predict(X)
-                        
-                        # Статистика кластеров
-                        unique_clusters = set(clusters)
-                        n_clusters = len(unique_clusters) - (1 if -1 in clusters else 0)
-                        noise_points = sum(clusters == -1)
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Обнаружено кластеров", n_clusters)
-                        with col2:
-                            st.metric("Точек шума", noise_points)
+                        X_sample = X
+                    
+                    # Быстрая кластеризация
+                    kmeans = KMeans(n_clusters=n_clusters, n_init=10, random_state=42)
+                    clusters = kmeans.fit_predict(X_sample)
                     
                     # Визуализация
-                    df_viz = df_analysis.copy()
+                    df_viz = df_analysis.loc[X_sample.index].copy()
                     df_viz['Cluster'] = clusters
                     
-                    # 2D scatter plot
-                    if len(features) >= 2:
-                        fig = px.scatter(
-                            df_viz,
-                            x=features[0],
-                            y=features[1],
-                            color='Cluster',
-                            title=f"Кластеризация: {features[0]} vs {features[1]}",
-                            hover_data=['city_name'] if 'city_name' in df_viz.columns else None
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
+                    fig = px.scatter(
+                        df_viz,
+                        x=features[0],
+                        y=features[1],
+                        color='Cluster',
+                        title=f"Кластеризация: {features[0]} vs {features[1]}"
+                    )
                     
-                    # Анализ кластеров
-                    st.subheader("📊 Характеристики кластеров")
+                    st.plotly_chart(fig, width='stretch', use_container_width=True)
                     
+                    # Быстрая статистика кластеров
                     if 'Cluster' in df_viz.columns:
-                        cluster_stats = df_viz.groupby('Cluster')[numeric_cols].mean()
-                        st.dataframe(cluster_stats.style.background_gradient(cmap='coolwarm'))
-                        
-                        # Распределение по кластерам
-                        cluster_counts = df_viz['Cluster'].value_counts().sort_index()
-                        fig_counts = px.bar(
-                            x=cluster_counts.index.astype(str),
-                            y=cluster_counts.values,
-                            title="Распределение точек по кластерам",
-                            labels={'x': 'Кластер', 'y': 'Количество точек'}
-                        )
-                        st.plotly_chart(fig_counts, use_container_width=True)
+                        cluster_stats = df_viz.groupby('Cluster')[numeric_cols[:5]].mean()
+                        st.dataframe(cluster_stats, width='stretch')
             
             # ========== РЕГРЕССИЯ ==========
             elif analysis_method == "Регрессия":
-                st.header("Регрессионный анализ")
+                st.header("Линейная регрессия")
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Выбор целевой переменной
-                    target = st.selectbox("Целевая переменная (Y):", numeric_cols)
+                    target = st.selectbox("Целевая (Y):", numeric_cols[:5])
                 
                 with col2:
-                    # Выбор признаков
-                    available_features = [col for col in numeric_cols if col != target]
-                    features = st.multiselect(
-                        "Признаки (X):",
-                        available_features,
-                        default=available_features[:3] if len(available_features) >= 3 else available_features
-                    )
+                    available = [col for col in numeric_cols[:5] if col != target]
+                    feature = st.selectbox("Признак (X):", available)
                 
-                if target and features:
-                    # Подготовка данных
-                    X = df_scaled[features].fillna(0)
-                    y = df_scaled[target]
+                if target and feature:
+                    # Простая регрессия с одним признаком
+                    X = df_scaled[[feature]].values.reshape(-1, 1)
+                    y = df_scaled[target].values
                     
-                    # Разделение на train/test
-                    test_size = st.slider("Размер тестовой выборки (%):", 10, 50, 20)
-                    X_train, X_test, y_train, y_test = train_test_split(
-                        X, y, test_size=test_size/100, random_state=42
-                    )
-                    
-                    # Выбор модели
-                    model_type = st.selectbox(
-                        "Тип модели:",
-                        ["Линейная регрессия", "Ridge", "Lasso", "Случайный лес"]
-                    )
-                    
-                    if model_type == "Линейная регрессия":
-                        model = LinearRegression()
-                    elif model_type == "Ridge":
-                        alpha = st.slider("Alpha (регуляризация):", 0.01, 10.0, 1.0)
-                        model = Ridge(alpha=alpha)
-                    elif model_type == "Lasso":
-                        alpha = st.slider("Alpha (регуляризация):", 0.01, 10.0, 1.0)
-                        model = Lasso(alpha=alpha)
-                    else:
-                        n_estimators = st.slider("Количество деревьев:", 10, 200, 100)
-                        model = RandomForestRegressor(n_estimators=n_estimators, random_state=42)
-                    
-                    # Обучение модели
-                    model.fit(X_train, y_train)
-                    
-                    # Прогнозы
-                    y_pred_train = model.predict(X_train)
-                    y_pred_test = model.predict(X_test)
+                    model = LinearRegression()
+                    model.fit(X, y)
+                    y_pred = model.predict(X)
                     
                     # Метрики
-                    r2_train = r2_score(y_train, y_pred_train)
-                    r2_test = r2_score(y_test, y_pred_test)
-                    mae_train = mean_absolute_error(y_train, y_pred_train)
-                    mae_test = mean_absolute_error(y_test, y_pred_test)
+                    r2 = r2_score(y, y_pred)
+                    mae = mean_absolute_error(y, y_pred)
                     
-                    # Отображение метрик
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2 = st.columns(2)
                     with col1:
-                        st.metric("R² (обучение)", f"{r2_train:.3f}")
+                        st.metric("R²", f"{r2:.3f}")
                     with col2:
-                        st.metric("R² (тест)", f"{r2_test:.3f}")
-                    with col3:
-                        st.metric("MAE (обучение)", f"{mae_train:.3f}")
-                    with col4:
-                        st.metric("MAE (тест)", f"{mae_test:.3f}")
+                        st.metric("MAE", f"{mae:.3f}")
                     
-                    # Визуализация результатов
-                    tab1, tab2 = st.tabs(["📈 Прогнозы", "📊 Важность признаков"])
+                    # Простая визуализация
+                    fig = go.Figure()
                     
-                    with tab1:
-                        # График фактических vs предсказанных значений
-                        fig = go.Figure()
-                        
-                        fig.add_trace(go.Scatter(
-                            x=y_test,
-                            y=y_pred_test,
-                            mode='markers',
-                            name='Тестовая выборка',
-                            marker=dict(color='blue', opacity=0.6)
-                        ))
-                        
-                        # Линия идеального прогноза
-                        min_val = min(y_test.min(), y_pred_test.min())
-                        max_val = max(y_test.max(), y_pred_test.max())
-                        fig.add_trace(go.Scatter(
-                            x=[min_val, max_val],
-                            y=[min_val, max_val],
-                            mode='lines',
-                            name='Идеальный прогноз',
-                            line=dict(color='red', dash='dash')
-                        ))
-                        
-                        fig.update_layout(
-                            title="Фактические vs Предсказанные значения",
-                            xaxis_title="Фактические значения",
-                            yaxis_title="Предсказанные значения"
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    with tab2:
-                        # Важность признаков
-                        if hasattr(model, 'feature_importances_'):
-                            importance_df = pd.DataFrame({
-                                'Признак': features,
-                                'Важность': model.feature_importances_
-                            }).sort_values('Важность', ascending=False)
-                            
-                            fig = px.bar(
-                                importance_df,
-                                x='Признак',
-                                y='Важность',
-                                title="Важность признаков в модели"
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
-                        elif hasattr(model, 'coef_'):
-                            coef_df = pd.DataFrame({
-                                'Признак': features,
-                                'Коэффициент': model.coef_
-                            }).sort_values('Коэффициент', ascending=False)
-                            
-                            fig = px.bar(
-                                coef_df,
-                                x='Признак',
-                                y='Коэффициент',
-                                title="Коэффициенты линейной модели"
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
-            
-            # ========== ВРЕМЕННЫЕ РЯДЫ ==========
-            elif analysis_method == "Временные ряды":
-                st.header("Анализ временных рядов")
-                
-                if 'date' not in df_analysis.columns:
-                    st.warning("Для анализа временных рядов нужна колонка с датами.")
-                else:
-                    # Выбор города
-                    if 'city_name' in df_analysis.columns:
-                        city = st.selectbox("Выберите город:", 
-                                          ['Все города'] + df_analysis['city_name'].unique().tolist())
-                        if city != 'Все города':
-                            df_city = df_analysis[df_analysis['city_name'] == city]
-                        else:
-                            df_city = df_analysis
-                        city_label = city
-                    else:
-                        df_city = df_analysis
-                        city_label = "Все данные"
-                    
-                    # Выбор переменной
-                    variable = st.selectbox("Выберите переменную:", numeric_cols)
-                    
-                    # Агрегация по дате
-                    df_city['date'] = pd.to_datetime(df_city['date'])
-                    df_ts = df_city.groupby('date')[variable].mean().reset_index()
-                    df_ts = df_ts.sort_values('date')
-                    
-                    # Визуализация временного ряда
-                    fig = px.line(
-                        df_ts,
-                        x='date',
-                        y=variable,
-                        title=f"{variable} по времени для {city_label}",
-                        markers=True
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Упрощенный анализ тренда
-                    st.subheader("📊 Анализ тренда")
-                    
-                    window_size = st.slider("Окно для скользящего среднего:", 7, 90, 30)
-                    
-                    df_ts['moving_avg'] = df_ts[variable].rolling(
-                        window=min(window_size, len(df_ts)), 
-                        center=True, 
-                        min_periods=1
-                    ).mean()
-                    
-                    fig_trend = go.Figure()
-                    
-                    fig_trend.add_trace(go.Scatter(
-                        x=df_ts['date'],
-                        y=df_ts[variable],
-                        name='Исходные данные',
-                        line=dict(color='lightblue', width=1)
+                    fig.add_trace(go.Scatter(
+                        x=df_analysis[feature],
+                        y=df_analysis[target],
+                        mode='markers',
+                        name='Данные',
+                        marker=dict(opacity=0.3)
                     ))
                     
-                    fig_trend.add_trace(go.Scatter(
-                        x=df_ts['date'],
-                        y=df_ts['moving_avg'],
-                        name=f'Скользящее среднее ({window_size} дней)',
-                        line=dict(color='red', width=2)
+                    # Линия регрессии
+                    x_range = np.linspace(df_analysis[feature].min(), df_analysis[feature].max(), 100)
+                    x_range_scaled = scaler.transform(x_range.reshape(-1, 1))
+                    y_pred_range = model.predict(x_range_scaled)
+                    
+                    fig.add_trace(go.Scatter(
+                        x=x_range,
+                        y=y_pred_range,
+                        mode='lines',
+                        name='Регрессия',
+                        line=dict(color='red', width=3)
                     ))
                     
-                    fig_trend.update_layout(
-                        title=f"Тренд {variable} для {city_label}",
-                        xaxis_title="Дата",
-                        yaxis_title=variable
+                    fig.update_layout(
+                        title=f"Регрессия: {target} от {feature}",
+                        xaxis_title=feature,
+                        yaxis_title=target
                     )
                     
-                    st.plotly_chart(fig_trend, use_container_width=True)
-                    
-                    # Автокорреляция
-                    st.subheader("📈 Автокорреляция")
-                    
-                    autocorr_values = calculate_autocorrelation(df_ts[variable], max_lags=50)
-                    
-                    if autocorr_values:
-                        fig_acf = go.Figure()
-                        
-                        fig_acf.add_trace(go.Bar(
-                            x=list(range(1, len(autocorr_values) + 1)),
-                            y=autocorr_values,
-                            name='Автокорреляция'
-                        ))
-                        
-                        # Доверительные интервалы
-                        conf_int = 1.96 / np.sqrt(len(df_ts))
-                        fig_acf.add_hline(y=conf_int, line_dash="dash", line_color="red",
-                                         annotation_text="Доверительный интервал 95%")
-                        fig_acf.add_hline(y=-conf_int, line_dash="dash", line_color="red")
-                        
-                        fig_acf.update_layout(
-                            title="Функция автокорреляции (ACF)",
-                            xaxis_title="Лаг (дни)",
-                            yaxis_title="Автокорреляция"
-                        )
-                        
-                        st.plotly_chart(fig_acf, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch', use_container_width=True)
             
             # ========== PCA ==========
             else:
                 st.header("Анализ главных компонент (PCA)")
                 
-                # Выбор признаков
+                # Ограничиваем количество признаков для скорости
                 pca_features = st.multiselect(
-                    "Выберите признаки для PCA:",
-                    numeric_cols,
-                    default=numeric_cols[:5] if len(numeric_cols) >= 5 else numeric_cols
+                    "Признаки для PCA:",
+                    numeric_cols[:8],
+                    default=numeric_cols[:4] if len(numeric_cols) >= 4 else numeric_cols
                 )
                 
                 if len(pca_features) >= 2:
-                    n_components = st.slider(
-                        "Количество компонент:",
-                        2, min(10, len(pca_features)), 3
-                    )
+                    n_components = st.slider("Компонент:", 2, 4, 2)
                     
-                    X_pca = df_scaled[pca_features].fillna(0)
+                    # Ограничиваем данные для скорости
+                    X_pca = df_scaled[pca_features]
+                    if len(X_pca) > 5000:
+                        X_pca_sample = X_pca.sample(5000, random_state=42)
+                    else:
+                        X_pca_sample = X_pca
                     
-                    # Применение PCA
+                    # Быстрый PCA
                     pca = PCA(n_components=n_components)
-                    X_pca_transformed = pca.fit_transform(X_pca)
+                    X_pca_transformed = pca.fit_transform(X_pca_sample)
                     
                     # Объясненная дисперсия
                     explained_variance = pca.explained_variance_ratio_
-                    cumulative_variance = explained_variance.cumsum()
                     
-                    # График объясненной дисперсии
+                    # Простой график дисперсии
                     fig_var = go.Figure()
                     
                     fig_var.add_trace(go.Bar(
@@ -881,56 +425,30 @@ else:
                         name='Доля дисперсии'
                     ))
                     
-                    fig_var.add_trace(go.Scatter(
-                        x=[f"PC{i+1}" for i in range(n_components)],
-                        y=cumulative_variance,
-                        name='Накопленная дисперсия',
-                        yaxis='y2'
-                    ))
-                    
                     fig_var.update_layout(
-                        title="Объясненная дисперсия по компонентам",
-                        yaxis=dict(title='Доля дисперсии'),
-                        yaxis2=dict(
-                            title='Накопленная дисперсия',
-                            overlaying='y',
-                            side='right'
-                        )
+                        title="Объясненная дисперсия",
+                        yaxis_title='Доля дисперсии'
                     )
                     
-                    st.plotly_chart(fig_var, use_container_width=True)
+                    st.plotly_chart(fig_var, width='stretch', use_container_width=True)
                     
                     # 2D визуализация PCA
                     if n_components >= 2:
-                        df_pca_viz = df_analysis.copy()
+                        df_pca_viz = df_analysis.loc[X_pca_sample.index].copy()
                         df_pca_viz['PC1'] = X_pca_transformed[:, 0]
                         df_pca_viz['PC2'] = X_pca_transformed[:, 1]
-                        
-                        # Выбор атрибута для цвета
-                        color_options = ['Нет'] + pca_features
-                        if 'city_name' in df_pca_viz.columns:
-                            color_options.append('city_name')
-                        
-                        color_by = st.selectbox("Цвет по:", color_options)
                         
                         fig_pca = px.scatter(
                             df_pca_viz,
                             x='PC1',
                             y='PC2',
-                            color=None if color_by == 'Нет' else color_by,
-                            title="PCA - Первые две главные компоненты",
-                            hover_data=pca_features
+                            title="PCA - Первые две компоненты"
                         )
                         
-                        st.plotly_chart(fig_pca, use_container_width=True)
-                    
-                    # Нагрузки компонент
-                    st.subheader("📊 Нагрузки компонент")
-                    
-                    loadings = pd.DataFrame(
-                        pca.components_.T,
-                        columns=[f'PC{i+1}' for i in range(n_components)],
-                        index=pca_features
-                    )
-                    
-                    st.dataframe(loadings.style.background_gradient(cmap='coolwarm', axis=0))
+                        st.plotly_chart(fig_pca, width='stretch', use_container_width=True)
+
+# ==========================================================
+# FOOTER
+# ==========================================================
+st.markdown("---")
+st.caption("Weather Analytics Dashboard")
