@@ -55,14 +55,40 @@ countries_df, cities_df, daily_df = load_and_preprocess_data()
 # ----------------------------------------------------------
 @st.cache_data
 def get_numeric_columns(df):
-    return df.select_dtypes(include=[np.number]).columns.tolist()
+    """Получение числовых колонок, исключая station_id и другие идентификаторы"""
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    
+    # Убираем station_id и другие идентификаторы из числовых признаков
+    id_columns = ['station_id', 'id', 'station', 'station_code', 'station_number']
+    
+    # Фильтруем только те колонки, которые реально являются числовыми признаками
+    filtered_cols = []
+    for col in numeric_cols:
+        # Проверяем, не является ли колонка идентификатором
+        is_id_column = False
+        for id_pattern in id_columns:
+            if id_pattern in col.lower():
+                is_id_column = True
+                break
+        
+        # Также проверяем, не слишком ли много уникальных значений (возможно, это ID)
+        if not is_id_column and col in df.columns:
+            unique_ratio = df[col].nunique() / len(df)
+            if unique_ratio < 0.95:  # Если менее 95% уникальных значений - вероятно, не ID
+                filtered_cols.append(col)
+    
+    return filtered_cols
 
 @st.cache_data
 def prepare_scaled_data(_df, numeric_cols):
     """Подготовка масштабированных данных с кэшированием"""
     scaler = StandardScaler()
     df_scaled = _df.copy()
-    df_scaled[numeric_cols] = scaler.fit_transform(_df[numeric_cols].fillna(0))
+    
+    # Заполняем пропуски перед масштабированием
+    df_filled = _df[numeric_cols].fillna(_df[numeric_cols].mean())
+    df_scaled[numeric_cols] = scaler.fit_transform(df_filled)
+    
     return df_scaled
 
 # ----------------------------------------------------------
@@ -79,6 +105,30 @@ page = st.sidebar.radio(
 # Статус данных
 if not daily_df.empty:
     st.sidebar.success(f"✅ Данные загружены: {len(daily_df):,} записей")
+    
+    # Показываем информацию о колонках
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Информация о данных")
+    
+    numeric_cols = get_numeric_columns(daily_df)
+    st.sidebar.info(f"Числовых признаков: {len(numeric_cols)}")
+    
+    # Показываем список числовых признаков (первые 10)
+    if numeric_cols:
+        st.sidebar.write("**Числовые признаки:**")
+        for col in numeric_cols[:10]:
+            st.sidebar.write(f"• {col}")
+        if len(numeric_cols) > 10:
+            st.sidebar.write(f"• ... и еще {len(numeric_cols) - 10}")
+    
+    # Показываем нечисловые колонки
+    non_numeric_cols = [col for col in daily_df.columns if col not in numeric_cols]
+    if non_numeric_cols:
+        st.sidebar.write("**Нечисловые колонки:**")
+        for col in non_numeric_cols[:5]:
+            st.sidebar.write(f"• {col}")
+        if len(non_numeric_cols) > 5:
+            st.sidebar.write(f"• ... и еще {len(non_numeric_cols) - 5}")
 else:
     st.sidebar.error("❌ Данные не загружены")
 
@@ -95,6 +145,9 @@ if page == "Визуализация данных":
     if daily_df.empty:
         st.error("Данные не загружены. Убедитесь, что файл daily_weather_smallest.csv находится в корневой директории.")
     else:
+        # Получаем числовые колонки (без station_id)
+        numeric_cols = get_numeric_columns(daily_df)
+        
         # Быстрые KPI метрики
         col1, col2, col3, col4 = st.columns(4)
         
@@ -110,11 +163,10 @@ if page == "Визуализация данных":
                 st.metric("Период", date_range)
         
         with col3:
-            numeric_cols = get_numeric_columns(daily_df)
             st.metric("Числовых признаков", len(numeric_cols))
         
         with col4:
-            st.metric("Пропусков", int(daily_df.isnull().sum().sum()))
+            st.metric("Пропусков", int(daily_df[numeric_cols].isnull().sum().sum()))
         
         # Вкладки
         tab1, tab2, tab3, tab4 = st.tabs(["Данные", "Распределения", "Корреляции", "География"])
@@ -129,7 +181,7 @@ if page == "Визуализация данных":
             
             if dataset_choice == "Ежедневные данные":
                 df_display = daily_df
-                # Быстрый фильтр
+                # Быстрый фильтр по городу
                 if 'city_name' in daily_df.columns:
                     selected_city = st.selectbox(
                         "Фильтр по городу:", 
@@ -147,18 +199,23 @@ if page == "Визуализация данных":
                 df_display = pd.DataFrame()
             
             if not df_display.empty:
-                # Быстрый просмотр с ограничением
+                # Показываем только первые 500 строк для скорости
                 preview_rows = st.slider("Показать строк:", 100, 1000, 500, step=100)
                 st.dataframe(df_display.head(preview_rows), use_container_width=True)
                 
-                # Быстрая статистика
+                # Быстрая статистика (только для числовых признаков)
                 if st.checkbox("Показать описательную статистику"):
-                    st.dataframe(df_display.describe(), use_container_width=True)
+                    if dataset_choice == "Ежедневные данные":
+                        display_cols = get_numeric_columns(df_display)
+                    else:
+                        display_cols = df_display.select_dtypes(include=[np.number]).columns.tolist()
+                    
+                    if display_cols:
+                        st.dataframe(df_display[display_cols].describe(), use_container_width=True)
         
         with tab2:
             st.header("Анализ распределений")
             
-            numeric_cols = get_numeric_columns(daily_df)
             if numeric_cols:
                 col1, col2 = st.columns(2)
                 
@@ -169,14 +226,7 @@ if page == "Визуализация данных":
                         ["Гистограмма", "Box Plot", "Violin Plot"]
                     )
                 
-                with col2:
-                    if 'city_name' in daily_df.columns:
-                        color_by = st.selectbox(
-                            "Цвет по городу:", 
-                            ['Нет'] + daily_df['city_name'].unique().tolist()[:5]
-                        )
-                    else:
-                        color_by = None
+                # Убрана опция "Цвет по городу" - она не имеет смысла при анализе распределений
                 
                 # Быстрое создание графиков
                 if plot_type == "Гистограмма":
@@ -184,30 +234,28 @@ if page == "Визуализация данных":
                         daily_df, 
                         x=selected_col, 
                         nbins=50,
-                        color=color_by if color_by != 'Нет' else None,
                         title=f"Распределение {selected_col}"
                     )
                 elif plot_type == "Box Plot":
                     fig = px.box(
                         daily_df, 
                         y=selected_col,
-                        color=color_by if color_by != 'Нет' else None,
                         title=f"Box Plot: {selected_col}"
                     )
                 else:
                     fig = px.violin(
                         daily_df, 
                         y=selected_col,
-                        color=color_by if color_by != 'Нет' else None,
                         title=f"Violin Plot: {selected_col}"
                     )
                 
                 st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Нет числовых признаков для анализа распределений")
         
         with tab3:
             st.header("Корреляционный анализ")
             
-            numeric_cols = get_numeric_columns(daily_df)
             if len(numeric_cols) > 1:
                 # Ограничиваем для скорости
                 max_features = min(10, len(numeric_cols))
@@ -238,13 +286,16 @@ if page == "Визуализация данных":
                             title="Матрица рассеяния"
                         )
                         st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Нужно минимум 2 числовых признака для корреляционного анализа")
         
         with tab4:
             st.header("Географическая визуализация")
             
             if not cities_df.empty and 'latitude' in cities_df.columns and 'longitude' in cities_df.columns:
-                # Выбор переменной для визуализации
+                # Получаем числовые колонки для cities
                 numeric_cols_cities = get_numeric_columns(cities_df)
+                
                 if numeric_cols_cities:
                     color_by = st.selectbox(
                         "Цвет по признаку:",
@@ -275,6 +326,8 @@ if page == "Визуализация данных":
                         title="Распределение городов"
                     )
                     st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Для географической визуализации нужны данные городов с координатами")
 
 # ==========================================================
 # PAGE 2 — АНАЛИЗ ДАННЫХ
@@ -284,12 +337,15 @@ else:
     if daily_df.empty:
         st.error("Для анализа нужны ежедневные данные")
     else:
-        # Быстрая подготовка данных
+        # Получаем числовые колонки (без station_id)
         numeric_cols = get_numeric_columns(daily_df)
         
         if not numeric_cols:
-            st.error("Нет числовых признаков для анализа")
+            st.error("Нет числовых признаков для анализа. Проверьте данные.")
         else:
+            # Показываем доступные признаки
+            st.info(f"**Доступно для анализа:** {len(numeric_cols)} числовых признаков")
+            
             # Выбор метода анализа
             analysis_method = st.selectbox(
                 "Метод анализа:",
@@ -376,9 +432,9 @@ else:
                     st.plotly_chart(fig, use_container_width=True)
                     
                     # Анализ кластеров
-                    if 'Cluster' in df_viz.columns:
+                    if 'Cluster' in df_viz.columns and n_clusters_found > 0:
                         st.subheader("Статистика по кластерам")
-                        cluster_stats = df_viz.groupby('Cluster')[numeric_cols[:5]].mean()
+                        cluster_stats = df_viz.groupby('Cluster')[features].mean()
                         st.dataframe(cluster_stats.style.background_gradient(cmap='coolwarm'), use_container_width=True)
             
             # ========== РЕГРЕССИЯ ==========
@@ -623,10 +679,9 @@ else:
                         df_pca_viz['PC1'] = X_pca_transformed[:, 0]
                         df_pca_viz['PC2'] = X_pca_transformed[:, 1]
                         
-                        color_by = st.selectbox(
-                            "Цвет по:",
-                            ['Нет'] + pca_features[:3]
-                        )
+                        # Упрощенная опция цвета - можно убрать или оставить только по числовым признакам
+                        color_options = ['Нет'] + pca_features[:3]
+                        color_by = st.selectbox("Цвет по:", color_options)
                         
                         fig_pca = px.scatter(
                             df_pca_viz,
@@ -636,9 +691,3 @@ else:
                             title="PCA - Первые две компоненты"
                         )
                         st.plotly_chart(fig_pca, use_container_width=True)
-
-# ==========================================================
-# FOOTER
-# ==========================================================
-st.markdown("---")
-st.caption(f"Weather Analytics Dashboard | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
