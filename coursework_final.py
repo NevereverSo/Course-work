@@ -355,7 +355,7 @@ else:
             # Подготовка масштабированных данных (с кэшированием)
             df_scaled = prepare_scaled_data(daily_df, numeric_cols)
             
-            # ========== КЛАСТЕРИЗАЦИЯ ==========
+                       # ========== КЛАСТЕРИЗАЦИЯ ==========
             if analysis_method == "Кластеризация":
                 st.header("Кластеризация данных")
                 
@@ -403,6 +403,10 @@ else:
                             with col2:
                                 st.metric("Silhouette Score", f"{silhouette:.3f}")
                             
+                            # Для K-Means количество кластеров известно
+                            n_clusters_found = n_clusters
+                            noise_points = 0
+                            
                         else:
                             model = DBSCAN(eps=eps, min_samples=min_samples)
                             clusters = model.fit_predict(X_sample)
@@ -431,7 +435,7 @@ else:
                     
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # Анализ кластеров
+                    # Анализ кластеров (используем общую переменную n_clusters_found)
                     if 'Cluster' in df_viz.columns and n_clusters_found > 0:
                         st.subheader("Статистика по кластерам")
                         cluster_stats = df_viz.groupby('Cluster')[features].mean()
