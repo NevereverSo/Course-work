@@ -9,13 +9,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ML libraries
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import silhouette_score, r2_score, mean_absolute_error
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
@@ -33,14 +33,14 @@ st.set_page_config(
 # ----------------------------------------------------------
 @st.cache_data
 def load_data():
-    # Проверяем наличие файлов с несколькими расширениями
+    # Проверяем наличие файлов
     import os
     
     # Список возможных имен файлов
     files_to_try = {
-        'countries': ['countries.csv', 'countries_weather.csv', 'countries_data.csv'],
-        'cities': ['cities.csv', 'cities_weather.csv', 'cities_data.csv'],
-        'daily': ['daily_weather_smallest.csv', 'daily_weather.csv', 'daily.csv']
+        'countries': ['countries.csv', 'countries_weather.csv'],
+        'cities': ['cities.csv', 'cities_weather.csv'],
+        'daily': ['daily_weather_smallest.csv', 'daily_weather.csv']
     }
     
     dataframes = {}
@@ -51,7 +51,6 @@ def load_data():
             try:
                 if os.path.exists(filename):
                     df = pd.read_csv(filename)
-                    st.sidebar.success(f"✓ Загружен {filename}")
                     break
             except:
                 continue
@@ -59,7 +58,6 @@ def load_data():
         if df is None:
             # Создаем пустой датафрейм если файл не найден
             df = pd.DataFrame()
-            st.sidebar.warning(f"⚠ Файл {name} не найден")
         
         dataframes[name] = df
     
@@ -139,37 +137,6 @@ def calculate_autocorrelation(series, max_lags=50):
     
     return autocorr
 
-def decompose_time_series(df, value_col, trend_window=30, seasonal_period=365):
-    """Простая декомпозиция временного ряда"""
-    if df.empty or value_col not in df.columns:
-        return None
-    
-    result = df.copy()
-    
-    # Тренд - скользящее среднее
-    result['trend'] = result[value_col].rolling(
-        window=min(trend_window, len(result)), 
-        center=True, 
-        min_periods=1
-    ).mean()
-    
-    # Сезонность (упрощенная)
-    if seasonal_period < len(result):
-        # Группируем по позиции в периоде
-        result['position'] = result.index % seasonal_period
-        seasonal_pattern = result.groupby('position')[value_col].mean()
-        
-        # Сопоставляем паттерн с данными
-        result['seasonal'] = result['position'].map(seasonal_pattern)
-        result['seasonal'].fillna(result[value_col].mean(), inplace=True)
-    else:
-        result['seasonal'] = 0
-    
-    # Остаток
-    result['residual'] = result[value_col] - result['trend'] - result['seasonal']
-    
-    return result
-
 # ----------------------------------------------------------
 # SIDEBAR
 # ----------------------------------------------------------
@@ -185,10 +152,10 @@ if not cities_weather_df.empty:
 if not daily_weather_df.empty:
     st.sidebar.info(f"📅 Daily: {len(daily_weather_df)} записей")
 
-# Навигация
+# Навигация - только 2 страницы
 page = st.sidebar.radio(
     "Навигация",
-    ["📊 Визуализация данных", "🔍 Анализ", "📈 Прогнозирование", "ℹ️ О проекте"]
+    ["📊 Визуализация данных", "🔍 Анализ данных"]
 )
 
 st.sidebar.markdown("---")
@@ -198,20 +165,23 @@ if not daily_weather_df.empty and 'date' in daily_weather_df.columns:
     st.sidebar.header("Фильтры")
     
     # Фильтр по дате
-    min_date = daily_weather_df['date'].min()
-    max_date = daily_weather_df['date'].max()
-    
-    if isinstance(min_date, str):
-        min_date = pd.to_datetime(min_date)
-    if isinstance(max_date, str):
-        max_date = pd.to_datetime(max_date)
-    
-    date_range = st.sidebar.date_input(
-        "Диапазон дат:",
-        [min_date, max_date],
-        min_value=min_date,
-        max_value=max_date
-    )
+    try:
+        min_date = daily_weather_df['date'].min()
+        max_date = daily_weather_df['date'].max()
+        
+        if isinstance(min_date, str):
+            min_date = pd.to_datetime(min_date)
+        if isinstance(max_date, str):
+            max_date = pd.to_datetime(max_date)
+        
+        date_range = st.sidebar.date_input(
+            "Диапазон дат:",
+            [min_date, max_date],
+            min_value=min_date,
+            max_value=max_date
+        )
+    except:
+        pass
 
 st.sidebar.markdown("---")
 st.sidebar.info("""
@@ -272,8 +242,7 @@ if page == "📊 Визуализация данных":
             cities_weather_df = demo_cities
             daily_weather_df = demo_daily
             
-            st.success("✅ Демо-данные созданы! Продолжайте работу с дашбордом.")
-            st.rerun()
+            st.success("✅ Демо-данные созданы! Обновите страницу.")
     
     else:
         # KPI Cards
@@ -508,7 +477,7 @@ if page == "📊 Визуализация данных":
 # ==========================================================
 # PAGE 2 — ANALYSIS
 # ==========================================================
-elif page == "🔍 Анализ":
+else:
     
     st.title("🔍 Анализ погодных данных")
     
@@ -790,14 +759,16 @@ elif page == "🔍 Анализ":
                             df_city = df_analysis[df_analysis['city_name'] == city]
                         else:
                             df_city = df_analysis
+                        city_label = city
                     else:
                         df_city = df_analysis
-                        city = "Все данные"
+                        city_label = "Все данные"
                     
                     # Выбор переменной
                     variable = st.selectbox("Выберите переменную:", numeric_cols)
                     
                     # Агрегация по дате
+                    df_city['date'] = pd.to_datetime(df_city['date'])
                     df_ts = df_city.groupby('date')[variable].mean().reset_index()
                     df_ts = df_ts.sort_values('date')
                     
@@ -806,7 +777,7 @@ elif page == "🔍 Анализ":
                         df_ts,
                         x='date',
                         y=variable,
-                        title=f"{variable} по времени для {city}",
+                        title=f"{variable} по времени для {city_label}",
                         markers=True
                     )
                     st.plotly_chart(fig, use_container_width=True)
@@ -839,7 +810,7 @@ elif page == "🔍 Анализ":
                     ))
                     
                     fig_trend.update_layout(
-                        title=f"Тренд {variable} для {city}",
+                        title=f"Тренд {variable} для {city_label}",
                         xaxis_title="Дата",
                         yaxis_title=variable
                     )
@@ -875,7 +846,7 @@ elif page == "🔍 Анализ":
                         st.plotly_chart(fig_acf, use_container_width=True)
             
             # ========== PCA ==========
-            elif analysis_method == "Анализ главных компонент (PCA)":
+            else:
                 st.header("Анализ главных компонент (PCA)")
                 
                 # Выбор признаков
