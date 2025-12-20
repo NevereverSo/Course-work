@@ -766,6 +766,24 @@ else:  # Прогнозирование
                             title=f"Исходный временной ряд: {target_col}",
                             line_shape='linear'
                         )
+                        
+                        # Обновляем цвета текста для первого графика
+                        fig_original.update_layout(
+                            font=dict(color='#FFCF40'),
+                            title_font=dict(color='#FFCF40'),
+                            xaxis=dict(
+                                title_font=dict(color='#FFCF40'),
+                                tickfont=dict(color='#FFCF40')
+                            ),
+                            yaxis=dict(
+                                title_font=dict(color='#FFCF40'),
+                                tickfont=dict(color='#FFCF40')
+                            ),
+                            legend=dict(font=dict(color='#FFCF40')),
+                            plot_bgcolor='white',
+                            paper_bgcolor='white'
+                        )
+                        
                         st.plotly_chart(fig_original, use_container_width=True)
                         
                         # Выбор метода прогнозирования
@@ -820,7 +838,7 @@ else:  # Прогнозирование
                                     y=ts_data['y'],
                                     mode='lines',
                                     name='Исходные данные',
-                                    line=dict(color='#FFC618', width=2.5)  # Темно-синий
+                                    line=dict(color='#1f77b4', width=2.5)  # Темно-синий
                                 ))
                                 
                                 # Прогнозы - яркие контрастные цвета
@@ -853,26 +871,46 @@ else:  # Прогнозирование
                                         )
                                     ))
                                 
+                                # Обновляем цвета текста на #FFCF40 (золотисто-желтый)
                                 fig_forecast.update_layout(
                                     title=f"Прогноз {target_col} на {forecast_days} дней",
                                     xaxis_title="Дата",
                                     yaxis_title=target_col,
                                     plot_bgcolor='white',
                                     paper_bgcolor='white',
-                                    font=dict(size=12),
+                                    font=dict(size=12, color='#FFCF40'),  # Основной цвет текста
+                                    
+                                    # Цвета подписей осей
+                                    xaxis=dict(
+                                        title_font=dict(color='#FFCF40'),
+                                        tickfont=dict(color='#FFCF40')  # Цвет меток на оси X
+                                    ),
+                                    yaxis=dict(
+                                        title_font=dict(color='#FFCF40'),
+                                        tickfont=dict(color='#FFCF40')  # Цвет меток на оси Y
+                                    ),
+                                    
+                                    # Легенда
                                     showlegend=True,
                                     legend=dict(
+                                        font=dict(color='#FFCF40'),  # Цвет текста легенды
                                         orientation="h",
                                         yanchor="bottom",
                                         y=1.02,
                                         xanchor="right",
-                                        x=1
-                                    )
+                                        x=1,
+                                        bgcolor='rgba(255, 255, 255, 0.8)',  # Полупрозрачный белый фон
+                                        bordercolor='#CCCCCC',
+                                        borderwidth=1
+                                    ),
+                                    
+                                    # Цвет заголовка
+                                    title_font=dict(color='#FFCF40', size=16)
                                 )
                                 
                                 st.plotly_chart(fig_forecast, use_container_width=True)
                                 
-                                # Таблица с последними прогнозами - исправленная версия
+                                # Таблица с последними прогнозами
                                 st.subheader("Последние значения прогнозов")
                                 
                                 # Создаем общий DataFrame для всех прогнозов
@@ -894,7 +932,12 @@ else:  # Прогнозирование
                                 # Сортируем по дате и показываем последние 10 значений
                                 if not forecast_table.empty:
                                     forecast_table = forecast_table.sort_index(ascending=False)
-                                    st.dataframe(forecast_table.head(10).round(2), use_container_width=True)
+                                    
+                                    # Стилизуем таблицу с золотистыми заголовками
+                                    st.dataframe(
+                                        forecast_table.head(10).round(2), 
+                                        use_container_width=True
+                                    )
                                     
                                     # Показываем статистику по прогнозам
                                     st.subheader("Статистика прогнозов")
@@ -909,25 +952,3 @@ else:  # Прогнозирование
                                     
                                     stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум']
                                     st.dataframe(stats_df.round(2), use_container_width=True)
-                                
-                                # Скачать прогнозы
-                                if st.button("Экспорт прогнозов в CSV"):
-                                    # Создаем DataFrame для экспорта
-                                    export_df = pd.DataFrame()
-                                    export_df['Дата'] = forecast_table.index
-                                    
-                                    for model_name in forecasts.keys():
-                                        if model_name in forecast_table.columns:
-                                            export_df[model_name] = forecast_table[model_name]
-                                    
-                                    csv = export_df.to_csv(index=False)
-                                    st.download_button(
-                                        label="Скачать прогнозы (CSV)",
-                                        data=csv,
-                                        file_name=f"forecast_{target_col}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                                        mime="text/csv"
-                                    )
-                            else:
-                                st.warning("Не удалось получить прогнозы ни одним методом.")
-                    else:
-                        st.error("Недостаточно данных для прогнозирования. Нужно минимум 10 дней.")
