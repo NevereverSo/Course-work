@@ -763,7 +763,8 @@ else:  # Прогнозирование
                             ts_data,
                             x='ds',
                             y='y',
-                            title=f"Исходный временной ряд: {target_col}"
+                            title=f"Исходный временной ряд: {target_col}",
+                            line_shape='linear'
                         )
                         st.plotly_chart(fig_original, use_container_width=True)
                         
@@ -813,17 +814,27 @@ else:  # Прогнозирование
                                 
                                 fig_forecast = go.Figure()
                                 
-                                # Исходные данные - серый цвет вместо черного
+                                # Исходные данные - темно-синий цвет для хорошей видимости
                                 fig_forecast.add_trace(go.Scatter(
                                     x=ts_data['ds'],
                                     y=ts_data['y'],
                                     mode='lines',
                                     name='Исходные данные',
-                                    line=dict(color='rgba(128, 128, 128, 0.7)', width=2)
+                                    line=dict(color='#FFC618', width=2.5)  # Темно-синий
                                 ))
                                 
-                                # Прогнозы - яркие цвета для лучшей видимости
-                                line_colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown']
+                                # Прогнозы - яркие контрастные цвета
+                                line_colors = [
+                                    '#ff7f0e',  # Оранжевый
+                                    '#2ca02c',  # Зеленый
+                                    '#d62728',  # Красный
+                                    '#9467bd',  # Фиолетовый
+                                    '#8c564b',  # Коричневый
+                                    '#e377c2',  # Розовый
+                                    '#7f7f7f',  # Серый
+                                    '#bcbd22',  # Желто-зеленый
+                                    '#17becf',  # Голубой
+                                ]
                                 line_styles = ['solid', 'dash', 'dot', 'dashdot']
                                 
                                 for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
@@ -847,32 +858,73 @@ else:  # Прогнозирование
                                     xaxis_title="Дата",
                                     yaxis_title=target_col,
                                     plot_bgcolor='white',
-                                    paper_bgcolor='white'
+                                    paper_bgcolor='white',
+                                    font=dict(size=12),
+                                    showlegend=True,
+                                    legend=dict(
+                                        orientation="h",
+                                        yanchor="bottom",
+                                        y=1.02,
+                                        xanchor="right",
+                                        x=1
+                                    )
                                 )
                                 
                                 st.plotly_chart(fig_forecast, use_container_width=True)
                                 
-                                # Таблица с последними прогнозами
+                                # Таблица с последними прогнозами - исправленная версия
                                 st.subheader("Последние значения прогнозов")
                                 
+                                # Создаем общий DataFrame для всех прогнозов
                                 forecast_table = pd.DataFrame()
-                                for model_name, forecast_df in forecasts.items():
-                                    forecast_table[model_name] = forecast_df['yhat'].values
                                 
-                                forecast_table.index = forecast_df['ds']
-                                st.dataframe(forecast_table.round(2).tail(10), use_container_width=True)
+                                # Собираем все прогнозы в один DataFrame
+                                for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
+                                    # Берем только значения прогноза и даты
+                                    temp_df = forecast_df[['ds', 'yhat']].copy()
+                                    temp_df.columns = ['Дата', model_name]
+                                    
+                                    if forecast_table.empty:
+                                        forecast_table = temp_df.set_index('Дата')
+                                    else:
+                                        # Объединяем по дате
+                                        temp_df = temp_df.set_index('Дата')
+                                        forecast_table = forecast_table.join(temp_df, how='outer')
+                                
+                                # Сортируем по дате и показываем последние 10 значений
+                                if not forecast_table.empty:
+                                    forecast_table = forecast_table.sort_index(ascending=False)
+                                    st.dataframe(forecast_table.head(10).round(2), use_container_width=True)
+                                    
+                                    # Показываем статистику по прогнозам
+                                    st.subheader("Статистика прогнозов")
+                                    stats_df = pd.DataFrame()
+                                    for model_name, forecast_df in forecasts.items():
+                                        stats_df[model_name] = [
+                                            forecast_df['yhat'].mean(),
+                                            forecast_df['yhat'].std(),
+                                            forecast_df['yhat'].min(),
+                                            forecast_df['yhat'].max()
+                                        ]
+                                    
+                                    stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум']
+                                    st.dataframe(stats_df.round(2), use_container_width=True)
                                 
                                 # Скачать прогнозы
                                 if st.button("Экспорт прогнозов в CSV"):
-                                    all_forecasts = pd.DataFrame({'date': forecast_df['ds']})
-                                    for model_name, forecast_df in forecasts.items():
-                                        all_forecasts[model_name] = forecast_df['yhat'].values
+                                    # Создаем DataFrame для экспорта
+                                    export_df = pd.DataFrame()
+                                    export_df['Дата'] = forecast_table.index
                                     
-                                    csv = all_forecasts.to_csv(index=False)
+                                    for model_name in forecasts.keys():
+                                        if model_name in forecast_table.columns:
+                                            export_df[model_name] = forecast_table[model_name]
+                                    
+                                    csv = export_df.to_csv(index=False)
                                     st.download_button(
-                                        label="Скачать прогнозы",
+                                        label="Скачать прогнозы (CSV)",
                                         data=csv,
-                                        file_name=f"forecast_{target_col}_{datetime.now().strftime('%Y%m%d')}.csv",
+                                        file_name=f"forecast_{target_col}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                                         mime="text/csv"
                                     )
                             else:
