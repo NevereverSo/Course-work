@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -17,17 +17,27 @@ from sklearn.metrics import (silhouette_score, r2_score, mean_absolute_error,
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 
+# Для прогнозирования временных рядов
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+try:
+    from prophet import Prophet
+    PROPHET_AVAILABLE = True
+except ImportError:
+    PROPHET_AVAILABLE = False
+    st.sidebar.warning("Prophet не установлен. Установите: pip install prophet")
+
 st.set_page_config(
     page_title="Weather Analytics Dashboard", 
     layout="wide"
 )
 
 # ----------------------------------------------------------
-# LOAD DATA С ОПТИМИЗАЦИЕЙ (без обработки пропусков и дубликатов)
+# LOAD DATA С ОПТИМИЗАЦИЕЙ
 # ----------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner="Загрузка данных...")
 def load_data():
-    """Быстрая загрузка данных (предполагаем, что данные уже очищены)"""
+    """Быстрая загрузка данных"""
     try:
         daily_df = pd.read_csv("daily_weather_smallest.csv", low_memory=False)
         if not daily_df.empty and 'date' in daily_df.columns:
@@ -55,13 +65,13 @@ countries_df, cities_df, daily_df = load_data()
 # ----------------------------------------------------------
 @st.cache_data
 def get_numeric_columns(df):
-    """Быстрое получение числовых колонок без station_id"""
+    """Быстрое получение числовых колонок"""
     if df.empty:
         return []
     
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     
-    # Быстро фильтруем ID колонки
+    # Фильтруем ID колонки
     id_keywords = ['station_id', 'id', 'station', '_id']
     filtered_cols = [col for col in numeric_cols 
                      if not any(keyword in col.lower() for keyword in id_keywords)]
@@ -70,7 +80,7 @@ def get_numeric_columns(df):
 
 @st.cache_data
 def prepare_scaled_data(_df, numeric_cols):
-    """Быстрая подготовка масштабированных данных (без обработки пропусков)"""
+    """Быстрая подготовка масштабированных данных"""
     if len(_df) == 0 or len(numeric_cols) == 0:
         return pd.DataFrame()
     
@@ -84,20 +94,149 @@ def prepare_scaled_data(_df, numeric_cols):
     else:
         scaler.fit(_df[numeric_cols])
     
-    # Применяем трансформацию ко всем данным
+    # Применяем трансформацию
     df_scaled = _df.copy()
     df_scaled[numeric_cols] = scaler.transform(_df[numeric_cols])
     
     return df_scaled
 
 # ----------------------------------------------------------
+# ФУНКЦИИ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ
+# ----------------------------------------------------------
+@st.cache_data(ttl=1800, max_entries=5)
+def prepare_time_series_data(df, target_col, city_col=None, date_col='date'):
+    """
+    Подготовка данных временного ряда с оптимизацией
+    """
+    if df.empty or target_col not in df.columns or date_col not in df.columns:
+        return None, None
+    
+    # Если указана колонка города, выбираем самый частый город
+    if city_col and city_col in df.columns and df[city_col].nunique() > 1:
+        city_counts = df[city_col].value_counts()
+        most_common_city = city_counts.index[0]
+        ts_df = df[df[city_col] == most_common_city].copy()
+    else:
+        ts_df = df.copy()
+        most_common_city = None
+    
+    # Сортируем по дате и убираем дубликаты
+    ts_df = ts_df.sort_values(date_col).drop_duplicates(subset=[date_col])
+    
+    if len(ts_df) < 10:  # Минимум данных
+        return None, most_common_city
+    
+    # Создаем временной ряд
+    ts_data = ts_df[[date_col, target_col]].copy()
+    ts_data.columns = ['ds', 'y']
+    
+    # Интерполяция пропусков
+    ts_data['y'] = ts_data['y'].interpolate(method='linear')
+    
+    return ts_data, most_common_city
+
+@st.cache_data(ttl=1800, max_entries=3)
+def arima_forecast(ts_data, periods=30, order=(1,1,1)):
+    """
+    Прогнозирование ARIMA
+    """
+    try:
+        # Используем последние 100 точек для скорости
+        if len(ts_data) > 100:
+            ts_series = ts_data.set_index('ds')['y'].iloc[-100:]
+        else:
+            ts_series = ts_data.set_index('ds')['y']
+        
+        model = ARIMA(ts_series, order=order)
+        model_fit = model.fit()
+        
+        forecast = model_fit.forecast(steps=periods)
+        last_date = ts_series.index[-1]
+        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
+        
+        forecast_df = pd.DataFrame({
+            'ds': forecast_dates,
+            'yhat': forecast.values
+        })
+        
+        return model_fit, forecast_df
+    except Exception as e:
+        st.error(f"Ошибка ARIMA: {str(e)[:100]}")
+        return None, None
+
+@st.cache_data(ttl=1800, max_entries=3)
+def exponential_smoothing_forecast(ts_data, periods=30):
+    """
+    Прогнозирование экспоненциальным сглаживанием
+    """
+    try:
+        ts_series = ts_data.set_index('ds')['y']
+        
+        if len(ts_series) > 200:
+            ts_series = ts_series.iloc[-200:]
+        
+        model = ExponentialSmoothing(
+            ts_series,
+            seasonal_periods=min(7, len(ts_series)),
+            trend='add',
+            seasonal='add'
+        )
+        model_fit = model.fit()
+        
+        forecast = model_fit.forecast(steps=periods)
+        last_date = ts_series.index[-1]
+        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
+        
+        forecast_df = pd.DataFrame({
+            'ds': forecast_dates,
+            'yhat': forecast.values
+        })
+        
+        return model_fit, forecast_df
+    except Exception as e:
+        st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
+        return None, None
+
+@st.cache_data(ttl=1800, max_entries=3)
+def prophet_forecast(ts_data, periods=30):
+    """
+    Прогнозирование Prophet
+    """
+    if not PROPHET_AVAILABLE:
+        return None, None
+    
+    try:
+        # Берем подвыборку для скорости
+        if len(ts_data) > 500:
+            ts_sample = ts_data.sample(500, random_state=42).sort_values('ds')
+        else:
+            ts_sample = ts_data.copy()
+        
+        model = Prophet(
+            seasonality_mode='additive',
+            daily_seasonality=False,
+            weekly_seasonality=True,
+            yearly_seasonality=len(ts_sample) > 365
+        )
+        
+        model.fit(ts_sample)
+        future = model.make_future_dataframe(periods=periods, freq='D')
+        forecast = model.predict(future)
+        
+        return model, forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']]
+    except Exception as e:
+        st.error(f"Ошибка Prophet: {str(e)[:100]}")
+        return None, None
+
+# ----------------------------------------------------------
 # SIDEBAR
 # ----------------------------------------------------------
 st.sidebar.title("Weather Analytics")
 
+# Обновляем навигацию для добавления новой страницы
 page = st.sidebar.radio(
     "Навигация",
-    ["Визуализация данных", "Анализ данных"]
+    ["Визуализация данных", "Анализ данных", "Прогнозирование"]
 )
 
 if not daily_df.empty:
@@ -107,7 +246,7 @@ else:
     st.sidebar.error("Данные не загружены")
 
 # ==========================================================
-# PAGE 1 — ВИЗУАЛИЗАЦИЯ ДАННЫХ (ОПТИМИЗИРОВАННАЯ)
+# PAGE 1 — ВИЗУАЛИЗАЦИЯ ДАННЫХ
 # ==========================================================
 if page == "Визуализация данных":
     
@@ -132,186 +271,159 @@ if page == "Визуализация данных":
         with col3:
             st.metric("Признаков", len(numeric_cols))
         
-        # Быстрый анализ распределения
-        if numeric_cols:
-            st.subheader("Быстрый анализ признаков")
-            
-            # Выбор признака через selectbox (быстрее чем multiselect)
-            selected_col = st.selectbox(
-                "Выберите признак для анализа:", 
-                numeric_cols[:15]  # Ограничиваем выбор для selectbox
-            )
-            
-            if selected_col in daily_df.columns:
-                # Простая статистика
-                data = daily_df[selected_col]
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("Среднее", f"{data.mean():.2f}")
-                with col2:
-                    st.metric("Медиана", f"{data.median():.2f}")
-                with col3:
-                    st.metric("Стд. отклонение", f"{data.std():.2f}")
-                with col4:
-                    st.metric("Диапазон", f"{data.min():.1f}-{data.max():.1f}")
-                
-                # Быстрая визуализация
-                fig = px.histogram(
-                    daily_df, 
-                    x=selected_col, 
-                    nbins=30,
-                    title=f"Распределение {selected_col}"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Вкладки с минимальной функциональностью
-        tab1, tab2 = st.tabs(["Данные", "Корреляции"])
+        # Вкладки с визуализациями
+        tab1, tab2, tab3 = st.tabs(["Быстрый анализ", "Scatter Plot", "Box & Violin Plots"])
         
         with tab1:
-            st.header("Просмотр данных")
+            st.subheader("Быстрый анализ признаков")
             
-            # Быстрый выбор датасета
-            dataset_choice = st.radio(
-                "Датасет:",
-                ["Ежедневные данные", "Города", "Страны"],
-                horizontal=True
-            )
-            
-            if dataset_choice == "Ежедневные данные":
-                df_display = daily_df
-                
-                # Быстрый фильтр по городу (если есть)
-                if 'city_name' in daily_df.columns:
-                    cities = daily_df['city_name'].unique()[:3]  # Только 3 города для скорости
-                    selected_city = st.selectbox(
-                        "Город:", 
-                        ['Все'] + list(cities)
-                    )
-                    if selected_city != 'Все':
-                        df_display = df_display[df_display['city_name'] == selected_city]
-            
-            elif dataset_choice == "Города" and not cities_df.empty:
-                df_display = cities_df
-            elif dataset_choice == "Страны" and not countries_df.empty:
-                df_display = countries_df
-            else:
-                df_display = pd.DataFrame()
-            
-            if not df_display.empty:
-                # Быстрый предпросмотр
-                st.dataframe(df_display.head(100), use_container_width=True)
-        
-        with tab2:
-            st.header("Корреляционный анализ")
-            
-            if len(numeric_cols) > 1:
-                # Убрано ограничение на количество признаков - пользователь выбирает сколько хочет
-                selected_features = st.multiselect(
-                    "Выберите признаки для анализа корреляций:",
-                    numeric_cols,
-                    default=numeric_cols[:min(10, len(numeric_cols))]  # По умолчанию первые 10 или меньше
+            if numeric_cols:
+                selected_col = st.selectbox(
+                    "Выберите признак для анализа:", 
+                    numeric_cols[:15]
                 )
                 
-                if len(selected_features) > 1:
-                    st.write(f"**Анализ корреляций между {len(selected_features)} признаками:**")
+                if selected_col in daily_df.columns:
+                    data = daily_df[selected_col]
+                    col1, col2, col3, col4 = st.columns(4)
                     
-                    # Вычисляем корреляции - используем все данные, так как это быстро
-                    corr_matrix = daily_df[selected_features].corr()
+                    with col1:
+                        st.metric("Среднее", f"{data.mean():.2f}")
+                    with col2:
+                        st.metric("Медиана", f"{data.median():.2f}")
+                    with col3:
+                        st.metric("Стд. отклонение", f"{data.std():.2f}")
+                    with col4:
+                        st.metric("Диапазон", f"{data.min():.1f}-{data.max():.1f}")
                     
-                    fig = px.imshow(
-                        corr_matrix,
-                        text_auto=".2f",
-                        aspect="auto",
-                        title=f"Корреляционная матрица ({len(selected_features)} признаков)",
-                        color_continuous_scale="RdBu_r"
+                    # Гистограмма
+                    fig = px.histogram(
+                        daily_df, 
+                        x=selected_col, 
+                        nbins=30,
+                        title=f"Распределение {selected_col}"
                     )
                     st.plotly_chart(fig, use_container_width=True)
+        
+        with tab2:
+            st.subheader("Scatter Plot Analysis")
+            
+            if len(numeric_cols) >= 2:
+                col1, col2 = st.columns(2)
+                with col1:
+                    x_col = st.selectbox("X-axis:", numeric_cols, index=0)
+                with col2:
+                    y_col = st.selectbox("Y-axis:", numeric_cols, index=min(1, len(numeric_cols)-1))
+                
+                # Добавляем опции для цвета и размера
+                color_options = ['None'] + [col for col in daily_df.columns if col not in [x_col, y_col]]
+                color_col = st.selectbox("Color by (optional):", color_options)
+                
+                # Опции для размера точек
+                size_options = ['None'] + numeric_cols
+                size_col = st.selectbox("Size by (optional):", size_options)
+                
+                # Создаем scatter plot
+                if x_col and y_col:
+                    fig = px.scatter(
+                        daily_df,
+                        x=x_col,
+                        y=y_col,
+                        color=color_col if color_col != 'None' else None,
+                        size=size_col if size_col != 'None' else None,
+                        title=f"{y_col} vs {x_col}",
+                        opacity=0.6
+                    )
                     
-                    # Показываем топ-5 корреляций
-                    st.subheader("Наиболее сильные корреляции")
-                    corr_pairs = []
-                    for i in range(len(corr_matrix.columns)):
-                        for j in range(i+1, len(corr_matrix.columns)):
-                            corr = corr_matrix.iloc[i, j]
-                            corr_pairs.append({
-                                'Признак 1': corr_matrix.columns[i],
-                                'Признак 2': corr_matrix.columns[j],
-                                'Корреляция': corr
-                            })
-                    
-                    if corr_pairs:
-                        corr_df = pd.DataFrame(corr_pairs)
-                        corr_df['abs_corr'] = corr_df['Корреляция'].abs()
-                        
-                        # Показываем топ-5 по абсолютному значению
-                        top_n = min(5, len(corr_df))
-                        top_correlations = corr_df.nlargest(top_n, 'abs_corr')
-                        
-                        # Отображаем в виде таблицы
-                        display_df = top_correlations[['Признак 1', 'Признак 2', 'Корреляция']].copy()
-                        display_df['Корреляция'] = display_df['Корреляция'].apply(lambda x: f"{x:.3f}")
-                        
-                        st.dataframe(
-                            display_df,
-                            column_config={
-                                "Признак 1": "Первый признак",
-                                "Признак 2": "Второй признак", 
-                                "Корреляция": "Коэффициент корреляции"
-                            },
-                            use_container_width=True
-                        )
-                    
-                    # Дополнительно: scatter plot для наиболее коррелированной пары
-                    if len(selected_features) >= 2 and len(corr_pairs) > 0:
-                        st.subheader("Визуализация наиболее коррелированной пары")
-                        
-                        # Находим пару с максимальной абсолютной корреляцией
-                        strongest_idx = corr_df['abs_corr'].idxmax()
-                        strongest_pair = corr_df.loc[strongest_idx]
-                        
-                        # Упрощенный scatter plot без trendline="ols"
-                        fig_scatter = px.scatter(
-                            daily_df,
-                            x=strongest_pair['Признак 1'],
-                            y=strongest_pair['Признак 2'],
-                            title=f"{strongest_pair['Признак 2']} vs {strongest_pair['Признак 1']} (r = {strongest_pair['Корреляция']:.3f})"
-                        )
-                        
-                        # Вместо trendline="ols" добавляем свою линию регрессии
-                        # Простая линейная регрессия через numpy
-                        x_data = daily_df[strongest_pair['Признак 1']].values
-                        y_data = daily_df[strongest_pair['Признак 2']].values
-                        
-                        # Удаляем NaN значения
-                        mask = ~np.isnan(x_data) & ~np.isnan(y_data)
-                        x_clean = x_data[mask]
-                        y_clean = y_data[mask]
+                    # Добавляем линию регрессии
+                    if st.checkbox("Показать линию регрессии"):
+                        mask = ~np.isnan(daily_df[x_col]) & ~np.isnan(daily_df[y_col])
+                        x_clean = daily_df[x_col][mask].values
+                        y_clean = daily_df[y_col][mask].values
                         
                         if len(x_clean) > 1:
-                            # Вычисляем коэффициенты линейной регрессии
                             coeffs = np.polyfit(x_clean, y_clean, 1)
-                            
-                            # Создаем линию регрессии
                             x_range = np.linspace(x_clean.min(), x_clean.max(), 100)
                             y_pred = coeffs[0] * x_range + coeffs[1]
                             
-                            fig_scatter.add_trace(go.Scatter(
+                            fig.add_trace(go.Scatter(
                                 x=x_range,
                                 y=y_pred,
                                 mode='lines',
                                 name='Линия регрессии',
                                 line=dict(color='red', width=2)
                             ))
-                        
-                        st.plotly_chart(fig_scatter, use_container_width=True)
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        with tab3:
+            st.subheader("Box Plot и Violin Plot")
+            
+            if numeric_cols:
+                # Выбор признака для анализа распределения
+                box_col = st.selectbox("Признак для анализа распределения:", numeric_cols[:10])
+                
+                # Выбор категориальной переменной для группировки (если есть)
+                cat_cols = daily_df.select_dtypes(include=['object', 'category']).columns.tolist()
+                
+                if cat_cols and len(cat_cols) > 0:
+                    cat_for_grouping = st.selectbox(
+                        "Группировать по (необязательно):",
+                        ['None'] + cat_cols
+                    )
                 else:
-                    st.info("Выберите как минимум 2 признака для анализа корреляций.")
+                    cat_for_grouping = 'None'
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Box Plot
+                    if cat_for_grouping != 'None':
+                        fig_box = px.box(
+                            daily_df,
+                            x=cat_for_grouping,
+                            y=box_col,
+                            title=f"Box Plot: {box_col} по {cat_for_grouping}"
+                        )
+                    else:
+                        fig_box = px.box(
+                            daily_df,
+                            y=box_col,
+                            title=f"Box Plot: {box_col}"
+                        )
+                    st.plotly_chart(fig_box, use_container_width=True)
+                
+                with col2:
+                    # Violin Plot
+                    if cat_for_grouping != 'None':
+                        fig_violin = px.violin(
+                            daily_df,
+                            x=cat_for_grouping,
+                            y=box_col,
+                            title=f"Violin Plot: {box_col} по {cat_for_grouping}",
+                            box=True  # Показываем box plot внутри violin
+                        )
+                    else:
+                        fig_violin = px.violin(
+                            daily_df,
+                            y=box_col,
+                            title=f"Violin Plot: {box_col}",
+                            box=True
+                        )
+                    st.plotly_chart(fig_violin, use_container_width=True)
+                
+                # Статистика по группам
+                if cat_for_grouping != 'None':
+                    st.subheader("Статистика по группам")
+                    group_stats = daily_df.groupby(cat_for_grouping)[box_col].agg([
+                        'count', 'mean', 'std', 'min', 'max', 'median'
+                    ]).round(2)
+                    st.dataframe(group_stats, use_container_width=True)
 
 # ==========================================================
-# PAGE 2 — АНАЛИЗ ДАННЫХ (ОПТИМИЗИРОВАННЫЙ)
+# PAGE 2 — АНАЛИЗ ДАННЫХ
 # ==========================================================
-else:
+elif page == "Анализ данных":
     
     if daily_df.empty:
         st.error("Для анализа нужны данные.")
@@ -326,30 +438,24 @@ else:
             analysis_method = st.selectbox(
                 "Метод анализа:",
                 ["Регрессия", "Кластеризация", "PCA"],
-                index=0  # Регрессия по умолчанию
+                index=0
             )
             
-            # Готовим данные только когда нужно
             if analysis_method in ["Регрессия", "Кластеризация", "PCA"]:
                 df_scaled = prepare_scaled_data(daily_df, numeric_cols)
             
             if analysis_method == "Регрессия":
                 st.header("Регрессионный анализ")
                 
-                # Быстрый выбор целевой переменной
                 target = st.selectbox(
                     "Целевая переменная (Y):", 
-                    numeric_cols[:10]  # Ограничиваем выбор
+                    numeric_cols[:10]
                 )
                 
                 if target:
-                    # Автоматический выбор признаков (топ-3 по корреляции)
                     if len(numeric_cols) > 1:
-                        # Вычисляем корреляции с целевой переменной
                         correlations = daily_df[numeric_cols].corr()[target].abs().sort_values(ascending=False)
-                        # Исключаем саму целевую переменную
                         correlations = correlations[correlations.index != target]
-                        # Берем топ-3 наиболее коррелированных признака
                         top_features = correlations.head(3).index.tolist()
                     else:
                         top_features = []
@@ -363,11 +469,9 @@ else:
                 if target and features:
                     test_size = st.slider("Тестовая выборка:", 0.1, 0.4, 0.2, 0.05)
                     
-                    # Готовим данные
                     X = df_scaled[features]
                     y = df_scaled[target]
                     
-                    # Используем выборку для скорости
                     sample_size = min(2000, len(X))
                     if len(X) > sample_size:
                         sample_idx = np.random.choice(len(X), sample_size, replace=False)
@@ -381,76 +485,39 @@ else:
                             X, y, test_size=test_size, random_state=42
                         )
                     
-                    # Модели для сравнения
                     models_config = {
-                        "Линейная регрессия": {
-                            "model": LinearRegression(),
-                            "params": {}
-                        },
-                        "Гребневая регрессия": {
-                            "model": Ridge(),
-                            "params": {"alpha": 1.0}
-                        },
-                        "Лассо регрессия": {
-                            "model": Lasso(),
-                            "params": {"alpha": 0.01}
-                        },
-                        "Random Forest": {
-                            "model": RandomForestRegressor(),
-                            "params": {"n_estimators": 50, "random_state": 42}
-                        },
-                        "Gradient Boosting": {
-                            "model": GradientBoostingRegressor(),
-                            "params": {"n_estimators": 50, "random_state": 42}
-                        }
+                        "Линейная регрессия": LinearRegression(),
+                        "Гребневая регрессия": Ridge(alpha=1.0),
+                        "Лассо регрессия": Lasso(alpha=0.01),
+                        "Random Forest": RandomForestRegressor(n_estimators=50, random_state=42),
+                        "Gradient Boosting": GradientBoostingRegressor(n_estimators=50, random_state=42)
                     }
                     
-                    # Настраиваем параметры
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        ridge_alpha = st.slider("Alpha для Ridge:", 0.01, 10.0, 1.0, 0.01)
-                        models_config["Гребневая регрессия"]["params"]["alpha"] = ridge_alpha
-                        
-                        lasso_alpha = st.slider("Alpha для Lasso:", 0.001, 1.0, 0.01, 0.001)
-                        models_config["Лассо регрессия"]["params"]["alpha"] = lasso_alpha
-                    
-                    # Обучение моделей
                     results = {}
-                    progress_bar = st.progress(0)
                     
-                    for idx, (name, config) in enumerate(models_config.items()):
-                        model = config["model"]
-                        model.set_params(**config["params"])
-                        
+                    for name, model in models_config.items():
                         model.fit(X_train, y_train)
                         y_pred = model.predict(X_test)
                         
-                        # Метрики
                         results[name] = {
                             'R²': r2_score(y_test, y_pred),
                             'MAE': mean_absolute_error(y_test, y_pred),
-                            'MAPE': mean_absolute_percentage_error(y_test, y_pred) * 100,  # в процентах
+                            'MAPE': mean_absolute_percentage_error(y_test, y_pred) * 100,
                             'RMSE': np.sqrt(mean_squared_error(y_test, y_pred))
                         }
-                        
-                        progress_bar.progress((idx + 1) / len(models_config))
                     
                     # Сравнительная таблица
                     st.subheader("Сравнение моделей")
-                    
                     results_df = pd.DataFrame(results).T.round(4)
                     st.dataframe(results_df, use_container_width=True)
                     
                     # Визуализация лучшей модели
                     best_model_name = max(results.keys(), key=lambda x: results[x]['R²'])
-                    best_config = models_config[best_model_name]
-                    best_model = best_config["model"]
-                    best_model.set_params(**best_config["params"])
+                    best_model = models_config[best_model_name]
                     best_model.fit(X_train, y_train)
                     
                     st.subheader(f"Лучшая модель: {best_model_name}")
                     
-                    # График прогнозов
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(
                         x=y_test,
@@ -459,7 +526,6 @@ else:
                         name='Прогнозы'
                     ))
                     
-                    # Линия идеального прогноза
                     min_val = min(y_test.min(), best_model.predict(X_test).min())
                     max_val = max(y_test.max(), best_model.predict(X_test).max())
                     fig.add_trace(go.Scatter(
@@ -480,7 +546,6 @@ else:
             elif analysis_method == "Кластеризация":
                 st.header("Кластеризация")
                 
-                # Быстрый выбор признаков
                 if len(numeric_cols) >= 2:
                     default_features = numeric_cols[:2]
                 else:
@@ -488,7 +553,7 @@ else:
                 
                 features = st.multiselect(
                     "Признаки для кластеризации:",
-                    numeric_cols[:6],  # Ограничиваем выбор
+                    numeric_cols[:6],
                     default=default_features
                 )
                 
@@ -500,17 +565,14 @@ else:
                     else:
                         eps = st.slider("EPS:", 0.1, 1.0, 0.5, 0.1)
                     
-                    # Готовим данные
                     X = df_scaled[features]
                     
-                    # Используем выборку
                     sample_size = min(1000, len(X))
                     if len(X) > sample_size:
                         X_sample = X.sample(sample_size, random_state=42)
                     else:
                         X_sample = X
                     
-                    # Кластеризация
                     if algorithm == "K-Means":
                         model = KMeans(n_clusters=n_clusters, n_init=3, random_state=42)
                         clusters = model.fit_predict(X_sample)
@@ -519,7 +581,6 @@ else:
                         model = DBSCAN(eps=eps, min_samples=5)
                         clusters = model.fit_predict(X_sample)
                     
-                    # Визуализация
                     df_viz = daily_df.loc[X_sample.index].copy()
                     df_viz['Cluster'] = clusters
                     
@@ -535,7 +596,6 @@ else:
             else:  # PCA
                 st.header("Анализ главных компонент (PCA)")
                 
-                # Автоматический выбор признаков
                 if len(numeric_cols) >= 4:
                     pca_features = numeric_cols[:4]
                 else:
@@ -544,10 +604,8 @@ else:
                 if len(pca_features) >= 2:
                     n_components = min(3, len(pca_features))
                     
-                    # PCA
                     X = df_scaled[pca_features]
                     
-                    # Используем выборку
                     sample_size = min(1000, len(X))
                     if len(X) > sample_size:
                         X_sample = X.sample(sample_size, random_state=42)
@@ -557,7 +615,6 @@ else:
                     pca = PCA(n_components=n_components)
                     X_pca = pca.fit_transform(X_sample)
                     
-                    # График объясненной дисперсии
                     explained_var = pca.explained_variance_ratio_
                     
                     fig = go.Figure()
@@ -573,7 +630,6 @@ else:
                     )
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # 2D визуализация
                     if n_components >= 2:
                         df_viz = daily_df.loc[X_sample.index].copy()
                         df_viz['PC1'] = X_pca[:, 0]
@@ -586,3 +642,178 @@ else:
                             title="PCA - Проекция данных"
                         )
                         st.plotly_chart(fig_scatter, use_container_width=True)
+
+# ==========================================================
+# PAGE 3 — ПРОГНОЗИРОВАНИЕ (НОВАЯ СТРАНИЦА)
+# ==========================================================
+else:  # Прогнозирование
+    
+    if daily_df.empty:
+        st.error("Для прогнозирования нужны данные.")
+    else:
+        st.header("Прогнозирование временных рядов")
+        
+        # Проверяем наличие даты
+        if 'date' not in daily_df.columns:
+            st.error("В данных отсутствует колонка с датами (date)")
+        else:
+            numeric_cols = get_numeric_columns(daily_df)
+            
+            if not numeric_cols:
+                st.error("Нет числовых признаков для прогнозирования.")
+            else:
+                # Конфигурация прогнозирования
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    target_col = st.selectbox(
+                        "Целевая переменная для прогноза:",
+                        numeric_cols[:10]
+                    )
+                
+                with col2:
+                    forecast_days = st.slider("Дней для прогноза:", 7, 90, 30)
+                
+                with col3:
+                    # Выбор города если есть
+                    if 'city_name' in daily_df.columns:
+                        cities = daily_df['city_name'].unique()[:5]
+                        selected_city = st.selectbox("Город:", cities)
+                    else:
+                        selected_city = None
+                
+                # Подготовка данных
+                if target_col:
+                    if selected_city:
+                        ts_data, _ = prepare_time_series_data(
+                            daily_df[daily_df['city_name'] == selected_city],
+                            target_col,
+                            'city_name'
+                        )
+                        st.info(f"Прогнозирование для города: {selected_city}")
+                    else:
+                        ts_data, _ = prepare_time_series_data(daily_df, target_col)
+                    
+                    if ts_data is not None:
+                        # Информация о временном ряде
+                        st.subheader("Информация о временном ряде")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Дней данных", len(ts_data))
+                        with col2:
+                            st.metric("Начало", ts_data['ds'].min().date())
+                        with col3:
+                            st.metric("Конец", ts_data['ds'].max().date())
+                        
+                        # Визуализация исходных данных
+                        fig_original = px.line(
+                            ts_data,
+                            x='ds',
+                            y='y',
+                            title=f"Исходный временной ряд: {target_col}"
+                        )
+                        st.plotly_chart(fig_original, use_container_width=True)
+                        
+                        # Выбор метода прогнозирования
+                        st.subheader("Методы прогнозирования")
+                        
+                        models_to_use = st.multiselect(
+                            "Выберите модели для сравнения:",
+                            ["ARIMA", "Exponential Smoothing", "Prophet"] if PROPHET_AVAILABLE 
+                            else ["ARIMA", "Exponential Smoothing"],
+                            default=["ARIMA", "Exponential Smoothing"]
+                        )
+                        
+                        if models_to_use:
+                            forecasts = {}
+                            models_info = {}
+                            
+                            # Прогнозирование выбранными методами
+                            for model_name in models_to_use:
+                                with st.spinner(f"Обучение {model_name}..."):
+                                    if model_name == "ARIMA":
+                                        model_fit, forecast = arima_forecast(
+                                            ts_data, 
+                                            periods=forecast_days,
+                                            order=(1,1,1)
+                                        )
+                                    elif model_name == "Exponential Smoothing":
+                                        model_fit, forecast = exponential_smoothing_forecast(
+                                            ts_data,
+                                            periods=forecast_days
+                                        )
+                                    elif model_name == "Prophet" and PROPHET_AVAILABLE:
+                                        model_fit, forecast = prophet_forecast(
+                                            ts_data,
+                                            periods=forecast_days
+                                        )
+                                    else:
+                                        continue
+                                    
+                                    if forecast is not None:
+                                        forecasts[model_name] = forecast
+                                        models_info[model_name] = model_fit
+                            
+                            # Визуализация прогнозов
+                            if forecasts:
+                                st.subheader("Сравнение прогнозов")
+                                
+                                fig_forecast = go.Figure()
+                                
+                                # Исходные данные
+                                fig_forecast.add_trace(go.Scatter(
+                                    x=ts_data['ds'],
+                                    y=ts_data['y'],
+                                    mode='lines',
+                                    name='Исходные данные',
+                                    line=dict(color='blue', width=2)
+                                ))
+                                
+                                # Прогнозы
+                                colors = ['red', 'green', 'orange', 'purple']
+                                for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
+                                    color = colors[idx % len(colors)]
+                                    
+                                    fig_forecast.add_trace(go.Scatter(
+                                        x=forecast_df['ds'],
+                                        y=forecast_df['yhat'],
+                                        mode='lines',
+                                        name=f'Прогноз {model_name}',
+                                        line=dict(color=color, width=2, dash='dash')
+                                    ))
+                                
+                                fig_forecast.update_layout(
+                                    title=f"Прогноз {target_col} на {forecast_days} дней",
+                                    xaxis_title="Дата",
+                                    yaxis_title=target_col
+                                )
+                                
+                                st.plotly_chart(fig_forecast, use_container_width=True)
+                                
+                                # Таблица с последними прогнозами
+                                st.subheader("Последние значения прогнозов")
+                                
+                                forecast_table = pd.DataFrame()
+                                for model_name, forecast_df in forecasts.items():
+                                    forecast_table[model_name] = forecast_df['yhat'].values
+                                
+                                forecast_table.index = forecast_df['ds']
+                                st.dataframe(forecast_table.round(2).tail(10), use_container_width=True)
+                                
+                                # Скачать прогнозы
+                                if st.button("Экспорт прогнозов в CSV"):
+                                    all_forecasts = pd.DataFrame({'date': forecast_df['ds']})
+                                    for model_name, forecast_df in forecasts.items():
+                                        all_forecasts[model_name] = forecast_df['yhat'].values
+                                    
+                                    csv = all_forecasts.to_csv(index=False)
+                                    st.download_button(
+                                        label="Скачать прогнозы",
+                                        data=csv,
+                                        file_name=f"forecast_{target_col}_{datetime.now().strftime('%Y%m%d')}.csv",
+                                        mime="text/csv"
+                                    )
+                            else:
+                                st.warning("Не удалось получить прогнозы ни одним методом.")
+                    else:
+                        st.error("Недостаточно данных для прогнозирования. Нужно минимум 10 дней.")
