@@ -314,15 +314,14 @@ if page == "Визуализация данных":
                     x_col = st.selectbox("X-axis:", numeric_cols, index=0)
                 with col2:
                     y_col = st.selectbox("Y-axis:", numeric_cols, index=min(1, len(numeric_cols)-1))
-            
-                # Создаем scatter plot
+                
+                # Убираем параметры цвета
                 if x_col and y_col:
+                    # Простой scatter plot без цвета и размера
                     fig = px.scatter(
                         daily_df,
                         x=x_col,
                         y=y_col,
-                        color=color_col if color_col != 'None' else None,
-                        size=size_col if size_col != 'None' else None,
                         title=f"{y_col} vs {x_col}",
                         opacity=0.6
                     )
@@ -343,7 +342,7 @@ if page == "Визуализация данных":
                                 y=y_pred,
                                 mode='lines',
                                 name='Линия регрессии',
-                                line=dict(color='red', width=2)
+                                line=dict(color='gray', width=2)
                             ))
                     
                     st.plotly_chart(fig, use_container_width=True)
@@ -358,59 +357,26 @@ if page == "Визуализация данных":
                 # Выбор категориальной переменной для группировки (если есть)
                 cat_cols = daily_df.select_dtypes(include=['object', 'category']).columns.tolist()
                 
-                if cat_cols and len(cat_cols) > 0:
-                    cat_for_grouping = st.selectbox(
-                        "Группировать по (необязательно):",
-                        ['None'] + cat_cols
-                    )
-                else:
-                    cat_for_grouping = 'None'
-                
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Box Plot
-                    if cat_for_grouping != 'None':
-                        fig_box = px.box(
-                            daily_df,
-                            x=cat_for_grouping,
-                            y=box_col,
-                            title=f"Box Plot: {box_col} по {cat_for_grouping}"
-                        )
-                    else:
-                        fig_box = px.box(
-                            daily_df,
-                            y=box_col,
-                            title=f"Box Plot: {box_col}"
-                        )
+                    # Box Plot без цвета
+                    fig_box = px.box(
+                        daily_df,
+                        y=box_col,
+                        title=f"Box Plot: {box_col}"
+                    )
                     st.plotly_chart(fig_box, use_container_width=True)
                 
                 with col2:
-                    # Violin Plot
-                    if cat_for_grouping != 'None':
-                        fig_violin = px.violin(
-                            daily_df,
-                            x=cat_for_grouping,
-                            y=box_col,
-                            title=f"Violin Plot: {box_col} по {cat_for_grouping}",
-                            box=True  # Показываем box plot внутри violin
-                        )
-                    else:
-                        fig_violin = px.violin(
-                            daily_df,
-                            y=box_col,
-                            title=f"Violin Plot: {box_col}",
-                            box=True
-                        )
+                    # Violin Plot без цвета
+                    fig_violin = px.violin(
+                        daily_df,
+                        y=box_col,
+                        title=f"Violin Plot: {box_col}",
+                        box=True
+                    )
                     st.plotly_chart(fig_violin, use_container_width=True)
-                
-                # Статистика по группам
-                if cat_for_grouping != 'None':
-                    st.subheader("Статистика по группам")
-                    group_stats = daily_df.groupby(cat_for_grouping)[box_col].agg([
-                        'count', 'mean', 'std', 'min', 'max', 'median'
-                    ]).round(2)
-                    st.dataframe(group_stats, use_container_width=True)
 
 # ==========================================================
 # PAGE 2 — АНАЛИЗ ДАННЫХ
@@ -515,7 +481,8 @@ elif page == "Анализ данных":
                         x=y_test,
                         y=best_model.predict(X_test),
                         mode='markers',
-                        name='Прогнозы'
+                        name='Прогнозы',
+                        marker=dict(color='gray')
                     ))
                     
                     min_val = min(y_test.min(), best_model.predict(X_test).min())
@@ -525,7 +492,7 @@ elif page == "Анализ данных":
                         y=[min_val, max_val],
                         mode='lines',
                         name='Идеально',
-                        line=dict(dash='dash')
+                        line=dict(dash='dash', color='black')
                     ))
                     
                     fig.update_layout(
@@ -580,7 +547,6 @@ elif page == "Анализ данных":
                         df_viz,
                         x=features[0],
                         y=features[1],
-                        color='Cluster',
                         title=f"Кластеризация: {features[0]} vs {features[1]}"
                     )
                     st.plotly_chart(fig, use_container_width=True)
@@ -758,20 +724,20 @@ else:  # Прогнозирование
                                     y=ts_data['y'],
                                     mode='lines',
                                     name='Исходные данные',
-                                    line=dict(color='blue', width=2)
+                                    line=dict(color='black', width=2)
                                 ))
                                 
                                 # Прогнозы
-                                colors = ['red', 'green', 'orange', 'purple']
+                                line_styles = ['dash', 'dot', 'dashdot']
                                 for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
-                                    color = colors[idx % len(colors)]
+                                    style = line_styles[idx % len(line_styles)]
                                     
                                     fig_forecast.add_trace(go.Scatter(
                                         x=forecast_df['ds'],
                                         y=forecast_df['yhat'],
                                         mode='lines',
                                         name=f'Прогноз {model_name}',
-                                        line=dict(color=color, width=2, dash='dash')
+                                        line=dict(color='gray', width=2, dash=style)
                                     ))
                                 
                                 fig_forecast.update_layout(
