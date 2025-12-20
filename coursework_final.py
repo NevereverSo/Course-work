@@ -13,7 +13,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.metrics import (r2_score, mean_absolute_error, 
+from sklearn.metrics import (silhouette_score, r2_score, mean_absolute_error, 
                            mean_absolute_percentage_error, mean_squared_error)
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
@@ -360,14 +360,26 @@ else:
                             model = KMeans(n_clusters=n_clusters, n_init=10, random_state=42)
                             clusters = model.fit_predict(X_sample)
                             inertia = model.inertia_
-                            silhouette = silhouette_score(X_sample, clusters)
+                            
+                            # Вычисляем silhouette score только если есть как минимум 2 кластера
+                            try:
+                                silhouette = silhouette_score(X_sample, clusters)
+                                silhouette_available = True
+                            except:
+                                silhouette = 0
+                                silhouette_available = False
+                            
                             n_clusters_found = n_clusters
+                            noise_points = 0
                             
                             col1, col2 = st.columns(2)
                             with col1:
                                 st.metric("Inertia", f"{inertia:.2f}")
                             with col2:
-                                st.metric("Silhouette Score", f"{silhouette:.3f}")
+                                if silhouette_available:
+                                    st.metric("Silhouette Score", f"{silhouette:.3f}")
+                                else:
+                                    st.metric("Silhouette Score", "N/A")
                             
                         else:
                             model = DBSCAN(eps=eps, min_samples=min_samples)
@@ -375,24 +387,44 @@ else:
                             n_clusters_found = len(set(clusters)) - (1 if -1 in clusters else 0)
                             noise_points = np.sum(clusters == -1)
                             
-                            col1, col2 = st.columns(2)
+                            # Вычисляем silhouette score только если есть как минимум 2 кластера
+                            if n_clusters_found >= 2:
+                                try:
+                                    silhouette = silhouette_score(X_sample, clusters)
+                                    silhouette_available = True
+                                except:
+                                    silhouette = 0
+                                    silhouette_available = False
+                            else:
+                                silhouette = 0
+                                silhouette_available = False
+                            
+                            col1, col2, col3 = st.columns(3)
                             with col1:
                                 st.metric("Найдено кластеров", n_clusters_found)
                             with col2:
                                 st.metric("Шумовых точек", noise_points)
+                            with col3:
+                                if silhouette_available:
+                                    st.metric("Silhouette Score", f"{silhouette:.3f}")
+                                else:
+                                    st.metric("Silhouette Score", "N/A")
                     
                     df_viz = daily_df.loc[sample_indices].copy()
                     df_viz['Cluster'] = clusters
                     
-                    fig = px.scatter(
-                        df_viz,
-                        x=features[0],
-                        y=features[1],
-                        color='Cluster',
-                        title=f"Кластеризация: {features[0]} vs {features[1]}"
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
+                    # Визуализируем только если есть кластеры
+                    if len(np.unique(clusters[clusters != -1])) > 0:
+                        fig = px.scatter(
+                            df_viz,
+                            x=features[0],
+                            y=features[1],
+                            color='Cluster',
+                            title=f"Кластеризация: {features[0]} vs {features[1]}"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("Не удалось обнаружить кластеры. Попробуйте изменить параметры алгоритма.")
             
             elif analysis_method == "Регрессия":
                 st.header("Регрессионный анализ")
