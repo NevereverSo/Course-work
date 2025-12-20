@@ -813,19 +813,22 @@ else:  # Прогнозирование
                                 
                                 fig_forecast = go.Figure()
                                 
-                                # Исходные данные
+                                # Исходные данные - серый цвет вместо черного
                                 fig_forecast.add_trace(go.Scatter(
                                     x=ts_data['ds'],
                                     y=ts_data['y'],
                                     mode='lines',
                                     name='Исходные данные',
-                                    line=dict(color='black', width=2)
+                                    line=dict(color='gray', width=2, opacity=0.7)
                                 ))
                                 
-                                # Прогнозы
-                                line_colors = ['red', 'blue', 'green', 'orange']
+                                # Прогнозы - яркие цвета для лучшей видимости
+                                line_colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown']
+                                line_styles = ['solid', 'dash', 'dot', 'dashdot']
+                                
                                 for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
                                     color = line_colors[idx % len(line_colors)]
+                                    style = line_styles[idx % len(line_styles)]
                                     
                                     fig_forecast.add_trace(go.Scatter(
                                         x=forecast_df['ds'],
@@ -835,14 +838,16 @@ else:  # Прогнозирование
                                         line=dict(
                                             color=color,
                                             width=3,
-                                            dash='solid'
+                                            dash=style
                                         )
                                     ))
                                 
                                 fig_forecast.update_layout(
                                     title=f"Прогноз {target_col} на {forecast_days} дней",
                                     xaxis_title="Дата",
-                                    yaxis_title=target_col
+                                    yaxis_title=target_col,
+                                    plot_bgcolor='white',
+                                    paper_bgcolor='white'
                                 )
                                 
                                 st.plotly_chart(fig_forecast, use_container_width=True)
