@@ -104,7 +104,7 @@ page = st.sidebar.radio(
 
 # Статус данных
 if not daily_df.empty:
-    st.sidebar.success(f"✅ Данные загружены: {len(daily_df):,} записей")
+    st.sidebar.success(f"Данные загружены: {len(daily_df):,} записей")
     
     # Показываем информацию о колонках
     st.sidebar.markdown("---")
@@ -130,7 +130,7 @@ if not daily_df.empty:
         if len(non_numeric_cols) > 5:
             st.sidebar.write(f"• ... и еще {len(non_numeric_cols) - 5}")
 else:
-    st.sidebar.error("❌ Данные не загружены")
+    st.sidebar.error("Данные не загружены")
 
 if page == "Визуализация данных":
     st.title("📊 Визуализация погодных данных")
