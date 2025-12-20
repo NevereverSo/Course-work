@@ -229,6 +229,32 @@ def prophet_forecast(ts_data, periods=30):
         return None, None
 
 # ----------------------------------------------------------
+# ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ ДАТ В ЧИСЛОВОЙ ФОРМАТ
+# ----------------------------------------------------------
+def convert_dates_to_numeric(dates):
+    """Конвертирует даты в числовой формат (количество дней с первой даты)"""
+    if len(dates) == 0:
+        return dates
+    
+    # Если это уже числовой формат, возвращаем как есть
+    if np.issubdtype(dates.dtype, np.number):
+        return dates
+    
+    # Конвертируем datetime в числовой формат
+    if pd.api.types.is_datetime64_any_dtype(dates):
+        # Используем разницу в днях от первой даты
+        min_date = dates.min()
+        numeric_dates = (dates - min_date).dt.days
+        return numeric_dates
+    elif hasattr(dates.iloc[0], 'date'):
+        # Для объектов datetime.date
+        min_date = min(dates)
+        numeric_dates = [(date - min_date).days for date in dates]
+        return pd.Series(numeric_dates)
+    
+    return dates
+
+# ----------------------------------------------------------
 # SIDEBAR
 # ----------------------------------------------------------
 st.sidebar.title("Weather Analytics")
@@ -315,11 +341,20 @@ if page == "Визуализация данных":
                 with col2:
                     y_col = st.selectbox("Y-axis:", numeric_cols, index=min(1, len(numeric_cols)-1))
                 
-                # Убираем параметры цвета
                 if x_col and y_col:
+                    # Создаем копию данных для графика
+                    plot_data = daily_df.copy()
+                    
+                    # Конвертируем даты в числовой формат если нужно
+                    if x_col == 'date' or (x_col in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[x_col])):
+                        plot_data[x_col] = convert_dates_to_numeric(plot_data[x_col])
+                    
+                    if y_col == 'date' or (y_col in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[y_col])):
+                        plot_data[y_col] = convert_dates_to_numeric(plot_data[y_col])
+                    
                     # Простой scatter plot без цвета и размера
                     fig = px.scatter(
-                        daily_df,
+                        plot_data,
                         x=x_col,
                         y=y_col,
                         title=f"{y_col} vs {x_col}",
@@ -328,9 +363,9 @@ if page == "Визуализация данных":
                     
                     # Добавляем линию регрессии
                     if st.checkbox("Показать линию регрессии"):
-                        mask = ~np.isnan(daily_df[x_col]) & ~np.isnan(daily_df[y_col])
-                        x_clean = daily_df[x_col][mask].values
-                        y_clean = daily_df[y_col][mask].values
+                        mask = ~np.isnan(plot_data[x_col]) & ~np.isnan(plot_data[y_col])
+                        x_clean = plot_data[x_col][mask].values
+                        y_clean = plot_data[y_col][mask].values
                         
                         if len(x_clean) > 1:
                             coeffs = np.polyfit(x_clean, y_clean, 1)
@@ -354,29 +389,34 @@ if page == "Визуализация данных":
                 # Выбор признака для анализа распределения
                 box_col = st.selectbox("Признак для анализа распределения:", numeric_cols[:10])
                 
-                # Выбор категориальной переменной для группировки (если есть)
-                cat_cols = daily_df.select_dtypes(include=['object', 'category']).columns.tolist()
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Box Plot без цвета
-                    fig_box = px.box(
-                        daily_df,
-                        y=box_col,
-                        title=f"Box Plot: {box_col}"
-                    )
-                    st.plotly_chart(fig_box, use_container_width=True)
-                
-                with col2:
-                    # Violin Plot без цвета
-                    fig_violin = px.violin(
-                        daily_df,
-                        y=box_col,
-                        title=f"Violin Plot: {box_col}",
-                        box=True
-                    )
-                    st.plotly_chart(fig_violin, use_container_width=True)
+                if box_col in daily_df.columns:
+                    # Создаем копию данных для графика
+                    plot_data = daily_df.copy()
+                    
+                    # Конвертируем даты в числовой формат если нужно
+                    if box_col == 'date' or (box_col in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[box_col])):
+                        plot_data[box_col] = convert_dates_to_numeric(plot_data[box_col])
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Box Plot без цвета
+                        fig_box = px.box(
+                            plot_data,
+                            y=box_col,
+                            title=f"Box Plot: {box_col}"
+                        )
+                        st.plotly_chart(fig_box, use_container_width=True)
+                    
+                    with col2:
+                        # Violin Plot без цвета
+                        fig_violin = px.violin(
+                            plot_data,
+                            y=box_col,
+                            title=f"Violin Plot: {box_col}",
+                            box=True
+                        )
+                        st.plotly_chart(fig_violin, use_container_width=True)
 
 # ==========================================================
 # PAGE 2 — АНАЛИЗ ДАННЫХ
@@ -427,14 +467,21 @@ elif page == "Анализ данных":
                 if target and features:
                     test_size = st.slider("Тестовая выборка:", 0.1, 0.4, 0.2, 0.05)
                     
-                    X = df_scaled[features]
-                    y = df_scaled[target]
+                    # Конвертируем даты если нужно
+                    if target in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[target]):
+                        # Для дат используем числовое представление
+                        X = df_scaled[features]
+                        y = convert_dates_to_numeric(daily_df[target])
+                        y_scaled = (y - y.mean()) / y.std()
+                    else:
+                        X = df_scaled[features]
+                        y = df_scaled[target]
                     
                     sample_size = min(2000, len(X))
                     if len(X) > sample_size:
                         sample_idx = np.random.choice(len(X), sample_size, replace=False)
                         X_sample = X.iloc[sample_idx]
-                        y_sample = y.iloc[sample_idx]
+                        y_sample = y.iloc[sample_idx] if hasattr(y, 'iloc') else y[sample_idx]
                         X_train, X_test, y_train, y_test = train_test_split(
                             X_sample, y_sample, test_size=test_size, random_state=42
                         )
@@ -542,6 +589,10 @@ elif page == "Анализ данных":
                     
                     df_viz = daily_df.loc[X_sample.index].copy()
                     df_viz['Cluster'] = clusters
+                    
+                    # Конвертируем даты если нужно для первого признака
+                    if features[0] in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[features[0]]):
+                        df_viz[features[0]] = convert_dates_to_numeric(df_viz[features[0]])
                     
                     fig = px.scatter(
                         df_viz,
