@@ -314,15 +314,7 @@ if page == "Визуализация данных":
                     x_col = st.selectbox("X-axis:", numeric_cols, index=0)
                 with col2:
                     y_col = st.selectbox("Y-axis:", numeric_cols, index=min(1, len(numeric_cols)-1))
-                
-                # Добавляем опции для цвета и размера
-                color_options = ['None'] + [col for col in daily_df.columns if col not in [x_col, y_col]]
-                color_col = st.selectbox("Color by (optional):", color_options)
-                
-                # Опции для размера точек
-                size_options = ['None'] + numeric_cols
-                size_col = st.selectbox("Size by (optional):", size_options)
-                
+            
                 # Создаем scatter plot
                 if x_col and y_col:
                     fig = px.scatter(
