@@ -352,17 +352,24 @@ if page == "Визуализация данных":
                     if y_col == 'date' or (y_col in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[y_col])):
                         plot_data[y_col] = convert_dates_to_numeric(plot_data[y_col])
                     
-                    # Простой scatter plot без цвета и размера
-                    fig = px.scatter(
-                        plot_data,
-                        x=x_col,
-                        y=y_col,
-                        title=f"{y_col} vs {x_col}",
-                        opacity=0.6
-                    )
+                    # Простой scatter plot с полупрозрачными точками
+                    fig = go.Figure()
+                    
+                    # Добавляем точки с низкой прозрачностью
+                    fig.add_trace(go.Scatter(
+                        x=plot_data[x_col],
+                        y=plot_data[y_col],
+                        mode='markers',
+                        name='Данные',
+                        marker=dict(
+                            color='rgba(100, 100, 100, 0.3)',  # Серый с прозрачностью 30%
+                            size=6
+                        ),
+                        opacity=0.3
+                    ))
                     
                     # Добавляем линию регрессии
-                    if st.checkbox("Показать линию регрессии"):
+                    if st.checkbox("Показать линию регрессии", value=True):
                         mask = ~np.isnan(plot_data[x_col]) & ~np.isnan(plot_data[y_col])
                         x_clean = plot_data[x_col][mask].values
                         y_clean = plot_data[y_col][mask].values
@@ -372,13 +379,25 @@ if page == "Визуализация данных":
                             x_range = np.linspace(x_clean.min(), x_clean.max(), 100)
                             y_pred = coeffs[0] * x_range + coeffs[1]
                             
+                            # Яркая, четкая линия регрессии
                             fig.add_trace(go.Scatter(
                                 x=x_range,
                                 y=y_pred,
                                 mode='lines',
                                 name='Линия регрессии',
-                                line=dict(color='gray', width=2)
+                                line=dict(
+                                    color='red',
+                                    width=3,
+                                    dash='solid'
+                                ),
+                                opacity=1.0
                             ))
+                    
+                    fig.update_layout(
+                        title=f"{y_col} vs {x_col}",
+                        xaxis_title=x_col,
+                        yaxis_title=y_col
+                    )
                     
                     st.plotly_chart(fig, use_container_width=True)
         
@@ -523,15 +542,23 @@ elif page == "Анализ данных":
                     
                     st.subheader(f"Лучшая модель: {best_model_name}")
                     
+                    # Создаем график с четко видимыми линиями
                     fig = go.Figure()
+                    
+                    # Точки с низкой прозрачностью
                     fig.add_trace(go.Scatter(
                         x=y_test,
                         y=best_model.predict(X_test),
                         mode='markers',
                         name='Прогнозы',
-                        marker=dict(color='gray')
+                        marker=dict(
+                            color='rgba(100, 100, 100, 0.3)',
+                            size=6
+                        ),
+                        opacity=0.3
                     ))
                     
+                    # Линия идеального прогноза - яркая и четкая
                     min_val = min(y_test.min(), best_model.predict(X_test).min())
                     max_val = max(y_test.max(), best_model.predict(X_test).max())
                     fig.add_trace(go.Scatter(
@@ -539,7 +566,12 @@ elif page == "Анализ данных":
                         y=[min_val, max_val],
                         mode='lines',
                         name='Идеально',
-                        line=dict(dash='dash', color='black')
+                        line=dict(
+                            dash='dash',
+                            color='red',
+                            width=3
+                        ),
+                        opacity=1.0
                     ))
                     
                     fig.update_layout(
@@ -710,9 +742,21 @@ else:  # Прогнозирование
                         with col1:
                             st.metric("Дней данных", len(ts_data))
                         with col2:
-                            st.metric("Начало", ts_data['ds'].min().date())
+                            # Конвертируем дату в строку перед отображением
+                            start_date = ts_data['ds'].min()
+                            if hasattr(start_date, 'date'):
+                                start_date_str = str(start_date.date())
+                            else:
+                                start_date_str = str(start_date)
+                            st.metric("Начало", start_date_str)
                         with col3:
-                            st.metric("Конец", ts_data['ds'].max().date())
+                            # Конвертируем дату в строку перед отображением
+                            end_date = ts_data['ds'].max()
+                            if hasattr(end_date, 'date'):
+                                end_date_str = str(end_date.date())
+                            else:
+                                end_date_str = str(end_date)
+                            st.metric("Конец", end_date_str)
                         
                         # Визуализация исходных данных
                         fig_original = px.line(
@@ -779,16 +823,20 @@ else:  # Прогнозирование
                                 ))
                                 
                                 # Прогнозы
-                                line_styles = ['dash', 'dot', 'dashdot']
+                                line_colors = ['red', 'blue', 'green', 'orange']
                                 for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
-                                    style = line_styles[idx % len(line_styles)]
+                                    color = line_colors[idx % len(line_colors)]
                                     
                                     fig_forecast.add_trace(go.Scatter(
                                         x=forecast_df['ds'],
                                         y=forecast_df['yhat'],
                                         mode='lines',
                                         name=f'Прогноз {model_name}',
-                                        line=dict(color='gray', width=2, dash=style)
+                                        line=dict(
+                                            color=color,
+                                            width=3,
+                                            dash='solid'
+                                        )
                                     ))
                                 
                                 fig_forecast.update_layout(
