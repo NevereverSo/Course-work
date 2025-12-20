@@ -224,9 +224,7 @@ if page == "Визуализация данных":
                         text_auto=".2f",
                         aspect="auto",
                         title=f"Корреляционная матрица ({len(selected_features)} признаков)",
-                        color_continuous_scale="RdBu_r",
-                        width=800,
-                        height=600
+                        color_continuous_scale="RdBu_r"
                     )
                     st.plotly_chart(fig, use_container_width=True)
                     
@@ -272,13 +270,40 @@ if page == "Визуализация данных":
                         strongest_idx = corr_df['abs_corr'].idxmax()
                         strongest_pair = corr_df.loc[strongest_idx]
                         
+                        # Упрощенный scatter plot без trendline="ols"
                         fig_scatter = px.scatter(
                             daily_df,
                             x=strongest_pair['Признак 1'],
                             y=strongest_pair['Признак 2'],
-                            title=f"{strongest_pair['Признак 2']} vs {strongest_pair['Признак 1']} (r = {strongest_pair['Корреляция']:.3f})",
-                            trendline="ols"  # Добавляем линию тренда
+                            title=f"{strongest_pair['Признак 2']} vs {strongest_pair['Признак 1']} (r = {strongest_pair['Корреляция']:.3f})"
                         )
+                        
+                        # Вместо trendline="ols" добавляем свою линию регрессии
+                        # Простая линейная регрессия через numpy
+                        x_data = daily_df[strongest_pair['Признак 1']].values
+                        y_data = daily_df[strongest_pair['Признак 2']].values
+                        
+                        # Удаляем NaN значения
+                        mask = ~np.isnan(x_data) & ~np.isnan(y_data)
+                        x_clean = x_data[mask]
+                        y_clean = y_data[mask]
+                        
+                        if len(x_clean) > 1:
+                            # Вычисляем коэффициенты линейной регрессии
+                            coeffs = np.polyfit(x_clean, y_clean, 1)
+                            
+                            # Создаем линию регрессии
+                            x_range = np.linspace(x_clean.min(), x_clean.max(), 100)
+                            y_pred = coeffs[0] * x_range + coeffs[1]
+                            
+                            fig_scatter.add_trace(go.Scatter(
+                                x=x_range,
+                                y=y_pred,
+                                mode='lines',
+                                name='Линия регрессии',
+                                line=dict(color='red', width=2)
+                            ))
+                        
                         st.plotly_chart(fig_scatter, use_container_width=True)
                 else:
                     st.info("Выберите как минимум 2 признака для анализа корреляций.")
