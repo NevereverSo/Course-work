@@ -819,7 +819,7 @@ else:  # Прогнозирование
                                     y=ts_data['y'],
                                     mode='lines',
                                     name='Исходные данные',
-                                    line=dict(color='gray', width=2, opacity=0.7)
+                                    line=dict(color='gray', width=2)
                                 ))
                                 
                                 # Прогнозы - яркие цвета для лучшей видимости
