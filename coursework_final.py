@@ -134,12 +134,12 @@ if page == "Визуализация данных":
         
         # Быстрый анализ распределения
         if numeric_cols:
-            st.subheader("Анализ признаков")
+            st.subheader("Быстрый анализ признаков")
             
             # Выбор признака через selectbox (быстрее чем multiselect)
             selected_col = st.selectbox(
-                "Выберите признак:", 
-                numeric_cols[:15]  # Ограничиваем выбор
+                "Выберите признак для анализа:", 
+                numeric_cols[:15]  # Ограничиваем выбор для selectbox
             )
             
             if selected_col in daily_df.columns:
@@ -174,11 +174,11 @@ if page == "Визуализация данных":
             # Быстрый выбор датасета
             dataset_choice = st.radio(
                 "Датасет:",
-                ["Ежедневные погодные данные", "Города", "Страны"],
+                ["Ежедневные данные", "Города", "Страны"],
                 horizontal=True
             )
             
-            if dataset_choice == "Ежедневные погодные данные":
+            if dataset_choice == "Ежедневные данные":
                 df_display = daily_df
                 
                 # Быстрый фильтр по городу (если есть)
@@ -206,50 +206,82 @@ if page == "Визуализация данных":
             st.header("Корреляционный анализ")
             
             if len(numeric_cols) > 1:
-                # Автоматический выбор топ-5 признаков для корреляции
-                if len(numeric_cols) > 5:
-                    # Выбираем признаки с наибольшей вариативностью
-                    variances = daily_df[numeric_cols].var().sort_values(ascending=False)
-                    top_features = variances.head(5).index.tolist()
-                else:
-                    top_features = numeric_cols
-                
-                st.write(f"**Анализ корреляций между признаками:**")
-                
-                # Быстрая корреляционная матрица
-                corr_matrix = daily_df[top_features].corr()
-                
-                fig = px.imshow(
-                    corr_matrix,
-                    text_auto=".2f",
-                    aspect="auto",
-                    title="Корреляционная матрица (топ-5 признаков)",
-                    color_continuous_scale="RdBu_r"
+                # Убрано ограничение на количество признаков - пользователь выбирает сколько хочет
+                selected_features = st.multiselect(
+                    "Выберите признаки для анализа корреляций:",
+                    numeric_cols,
+                    default=numeric_cols[:min(10, len(numeric_cols))]  # По умолчанию первые 10 или меньше
                 )
-                st.plotly_chart(fig, use_container_width=True)
                 
-                # Показываем топ-3 корреляции
-                st.subheader("Наиболее сильные корреляции")
-                corr_pairs = []
-                for i in range(len(corr_matrix.columns)):
-                    for j in range(i+1, len(corr_matrix.columns)):
-                        corr = corr_matrix.iloc[i, j]
-                        corr_pairs.append({
-                            'Признак 1': corr_matrix.columns[i],
-                            'Признак 2': corr_matrix.columns[j],
-                            'Корреляция': corr
-                        })
-                
-                corr_df = pd.DataFrame(corr_pairs)
-                corr_df['abs_corr'] = corr_df['Корреляция'].abs()
-                top_correlations = corr_df.nlargest(3, 'abs_corr')
-                
-                for _, row in top_correlations.iterrows():
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"**{row['Признак 1']} ↔ {row['Признак 2']}**")
-                    with col2:
-                        st.write(f"r = {row['Корреляция']:.3f}")
+                if len(selected_features) > 1:
+                    st.write(f"**Анализ корреляций между {len(selected_features)} признаками:**")
+                    
+                    # Вычисляем корреляции - используем все данные, так как это быстро
+                    corr_matrix = daily_df[selected_features].corr()
+                    
+                    fig = px.imshow(
+                        corr_matrix,
+                        text_auto=".2f",
+                        aspect="auto",
+                        title=f"Корреляционная матрица ({len(selected_features)} признаков)",
+                        color_continuous_scale="RdBu_r",
+                        width=800,
+                        height=600
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Показываем топ-5 корреляций
+                    st.subheader("Наиболее сильные корреляции")
+                    corr_pairs = []
+                    for i in range(len(corr_matrix.columns)):
+                        for j in range(i+1, len(corr_matrix.columns)):
+                            corr = corr_matrix.iloc[i, j]
+                            corr_pairs.append({
+                                'Признак 1': corr_matrix.columns[i],
+                                'Признак 2': corr_matrix.columns[j],
+                                'Корреляция': corr
+                            })
+                    
+                    if corr_pairs:
+                        corr_df = pd.DataFrame(corr_pairs)
+                        corr_df['abs_corr'] = corr_df['Корреляция'].abs()
+                        
+                        # Показываем топ-5 по абсолютному значению
+                        top_n = min(5, len(corr_df))
+                        top_correlations = corr_df.nlargest(top_n, 'abs_corr')
+                        
+                        # Отображаем в виде таблицы
+                        display_df = top_correlations[['Признак 1', 'Признак 2', 'Корреляция']].copy()
+                        display_df['Корреляция'] = display_df['Корреляция'].apply(lambda x: f"{x:.3f}")
+                        
+                        st.dataframe(
+                            display_df,
+                            column_config={
+                                "Признак 1": "Первый признак",
+                                "Признак 2": "Второй признак", 
+                                "Корреляция": "Коэффициент корреляции"
+                            },
+                            use_container_width=True
+                        )
+                    
+                    # Дополнительно: scatter plot для наиболее коррелированной пары
+                    if len(selected_features) >= 2 and len(corr_pairs) > 0:
+                        st.subheader("Визуализация наиболее коррелированной пары")
+                        
+                        # Находим пару с максимальной абсолютной корреляцией
+                        strongest_idx = corr_df['abs_corr'].idxmax()
+                        strongest_pair = corr_df.loc[strongest_idx]
+                        
+                        fig_scatter = px.scatter(
+                            daily_df,
+                            x=strongest_pair['Признак 1'],
+                            y=strongest_pair['Признак 2'],
+                            title=f"{strongest_pair['Признак 2']} vs {strongest_pair['Признак 1']} (r = {strongest_pair['Корреляция']:.3f})",
+                            trendline="ols"  # Добавляем линию тренда
+                        )
+                        st.plotly_chart(fig_scatter, use_container_width=True)
+                else:
+                    st.info("Выберите как минимум 2 признака для анализа корреляций.")
 
 # ==========================================================
 # PAGE 2 — АНАЛИЗ ДАННЫХ (ОПТИМИЗИРОВАННЫЙ)
