@@ -789,10 +789,10 @@ else:  # Прогнозирование
                         # Выбор метода прогнозирования
                         st.subheader("Методы прогнозирования")
                         
+                        # Убираем Prophet из списка выбора
                         models_to_use = st.multiselect(
                             "Выберите модели для сравнения:",
-                            ["ARIMA", "Exponential Smoothing", "Prophet"] if PROPHET_AVAILABLE 
-                            else ["ARIMA", "Exponential Smoothing"],
+                            ["ARIMA", "Exponential Smoothing"],  # Только две модели
                             default=["ARIMA", "Exponential Smoothing"]
                         )
                         
@@ -814,14 +814,10 @@ else:  # Прогнозирование
                                             ts_data,
                                             periods=forecast_days
                                         )
-                                    elif model_name == "Prophet" and PROPHET_AVAILABLE:
-                                        model_fit, forecast = prophet_forecast(
-                                            ts_data,
-                                            periods=forecast_days
-                                        )
                                     else:
+                                        # Пропускаем любые другие модели (на случай если что-то добавили)
                                         continue
-                                    
+                                        
                                     if forecast is not None:
                                         forecasts[model_name] = forecast
                                         models_info[model_name] = model_fit
@@ -843,15 +839,10 @@ else:  # Прогнозирование
                                 
                                 # Прогнозы - яркие контрастные цвета
                                 line_colors = [
-                                    '#ff7f0e',  # Оранжевый
-                                    '#2ca02c',  # Зеленый
-                                    '#d62728',  # Красный
-                                    '#9467bd',  # Фиолетовый
-                                    '#8c564b',  # Коричневый
-                                    '#e377c2',  # Розовый
-                                    '#7f7f7f',  # Серый
-                                    '#bcbd22',  # Желто-зеленый
-                                    '#17becf',  # Голубой
+                                    '#ff7f0e',  # Оранжевый (для ARIMA)
+                                    '#2ca02c',  # Зеленый (для Exponential Smoothing)
+                                    '#d62728',  # Красный (запасной)
+                                    '#9467bd',  # Фиолетовый (запасной)
                                 ]
                                 line_styles = ['solid', 'dash', 'dot', 'dashdot']
                                 
@@ -859,17 +850,19 @@ else:  # Прогнозирование
                                     color = line_colors[idx % len(line_colors)]
                                     style = line_styles[idx % len(line_styles)]
                                     
-                                    fig_forecast.add_trace(go.Scatter(
-                                        x=forecast_df['ds'],
-                                        y=forecast_df['yhat'],
-                                        mode='lines',
-                                        name=f'Прогноз {model_name}',
-                                        line=dict(
-                                            color=color,
-                                            width=3,
-                                            dash=style
-                                        )
-                                    ))
+                                    # Показываем только ARIMA и Exponential Smoothing
+                                    if model_name in ["ARIMA", "Exponential Smoothing"]:
+                                        fig_forecast.add_trace(go.Scatter(
+                                            x=forecast_df['ds'],
+                                            y=forecast_df['yhat'],
+                                            mode='lines',
+                                            name=f'Прогноз {model_name}',
+                                            line=dict(
+                                                color=color,
+                                                width=3,
+                                                dash=style
+                                            )
+                                        ))
                                 
                                 # Обновляем цвета текста на #FFCF40 (золотисто-желтый)
                                 fig_forecast.update_layout(
@@ -910,16 +903,16 @@ else:  # Прогнозирование
                                 
                                 st.plotly_chart(fig_forecast, use_container_width=True)
                                 
-                                # Таблица с последними прогнозами - показываем только ARIMA и Exponential Smoothing
+                                # Таблица с последними прогнозами
                                 st.subheader("Последние значения прогнозов")
                                 
                                 # Создаем общий DataFrame для всех прогнозов
                                 forecast_table = pd.DataFrame()
                                 
-                                # Собираем прогнозы в один DataFrame, исключая Prophet
+                                # Собираем все прогнозы в один DataFrame
                                 for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
-                                    # Пропускаем Prophet, если он есть
-                                    if model_name == "Prophet":
+                                    # Пропускаем любые другие модели кроме ARIMA и Exponential Smoothing
+                                    if model_name not in ["ARIMA", "Exponential Smoothing"]:
                                         continue
                                         
                                     # Берем только значения прогноза и даты
@@ -943,13 +936,12 @@ else:  # Прогнозирование
                                         use_container_width=True
                                     )
                                     
-                                    # Показываем статистику по прогнозам (тоже без Prophet)
+                                    # Показываем статистику по прогнозам
                                     st.subheader("Статистика прогнозов")
                                     stats_df = pd.DataFrame()
-                                    
                                     for model_name, forecast_df in forecasts.items():
-                                        # Пропускаем Prophet
-                                        if model_name == "Prophet":
+                                        # Пропускаем любые другие модели кроме ARIMA и Exponential Smoothing
+                                        if model_name not in ["ARIMA", "Exponential Smoothing"]:
                                             continue
                                             
                                         stats_df[model_name] = [
@@ -961,5 +953,22 @@ else:  # Прогнозирование
                                     
                                     stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум']
                                     st.dataframe(stats_df.round(2), use_container_width=True)
-                                else:
-                                    st.info("Нет данных для отображения таблицы прогнозов.")
+                                
+                                # Скачать прогнозы
+                                if st.button("Экспорт прогнозов в CSV"):
+                                    # Создаем DataFrame для экспорта
+                                    export_df = pd.DataFrame()
+                                    export_df['Дата'] = forecast_table.index
+                                    
+                                    for model_name in forecast_table.columns:
+                                        export_df[model_name] = forecast_table[model_name]
+                                    
+                                    csv = export_df.to_csv(index=False)
+                                    st.download_button(
+                                        label="Скачать прогнозы (CSV)",
+                                        data=csv,
+                                        file_name=f"forecast_{target_col}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                        mime="text/csv"
+                                    )
+                            else:
+                                st.warning("Не удалось получить прогнозы ни одним методом.")
