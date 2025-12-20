@@ -552,7 +552,7 @@ elif page == "Анализ данных":
                         mode='markers',
                         name='Прогнозы',
                         marker=dict(
-                            color='rgba(100, 100, 100, 0.3)',
+                            color='#FFB02E',
                             size=6
                         ),
                         opacity=0.3
