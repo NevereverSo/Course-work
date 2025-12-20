@@ -910,14 +910,18 @@ else:  # Прогнозирование
                                 
                                 st.plotly_chart(fig_forecast, use_container_width=True)
                                 
-                                # Таблица с последними прогнозами
+                                # Таблица с последними прогнозами - показываем только ARIMA и Exponential Smoothing
                                 st.subheader("Последние значения прогнозов")
                                 
                                 # Создаем общий DataFrame для всех прогнозов
                                 forecast_table = pd.DataFrame()
                                 
-                                # Собираем все прогнозы в один DataFrame
+                                # Собираем прогнозы в один DataFrame, исключая Prophet
                                 for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
+                                    # Пропускаем Prophet, если он есть
+                                    if model_name == "Prophet":
+                                        continue
+                                        
                                     # Берем только значения прогноза и даты
                                     temp_df = forecast_df[['ds', 'yhat']].copy()
                                     temp_df.columns = ['Дата', model_name]
@@ -939,10 +943,15 @@ else:  # Прогнозирование
                                         use_container_width=True
                                     )
                                     
-                                    # Показываем статистику по прогнозам
+                                    # Показываем статистику по прогнозам (тоже без Prophet)
                                     st.subheader("Статистика прогнозов")
                                     stats_df = pd.DataFrame()
+                                    
                                     for model_name, forecast_df in forecasts.items():
+                                        # Пропускаем Prophet
+                                        if model_name == "Prophet":
+                                            continue
+                                            
                                         stats_df[model_name] = [
                                             forecast_df['yhat'].mean(),
                                             forecast_df['yhat'].std(),
@@ -952,3 +961,5 @@ else:  # Прогнозирование
                                     
                                     stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум']
                                     st.dataframe(stats_df.round(2), use_container_width=True)
+                                else:
+                                    st.info("Нет данных для отображения таблицы прогнозов.")
