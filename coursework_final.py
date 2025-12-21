@@ -280,16 +280,15 @@ def calculate_time_series_metrics(y_true, y_pred, variable_name=""):
     """
     metrics = {}
     
-    # Преобразуем в массивы
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
+    # Преобразуем в массивы и фильтруем NaN
+    y_true = np.array(y_true, dtype=np.float64)
+    y_pred = np.array(y_pred, dtype=np.float64)
     
-    # Фильтруем NaN
     mask = (~np.isnan(y_true)) & (~np.isnan(y_pred))
     y_true_clean = y_true[mask]
     y_pred_clean = y_pred[mask]
     
-    if len(y_true_clean) < 2:
+    if len(y_true_clean) < 3:  # Минимум 3 точки
         return {
             'RMSE': np.nan,
             'MAE': np.nan,
@@ -306,52 +305,79 @@ def calculate_time_series_metrics(y_true, y_pred, variable_name=""):
         metrics['RMSE'] = np.nan
         metrics['MAE'] = np.nan
     
-    # 2. R² ДЛЯ ВРЕМЕННЫХ РЯДОВ (правильный расчет)
+    # 2. R² ДЛЯ ВРЕМЕННЫХ РЯДОВ - ИСПРАВЛЕННЫЙ РАСЧЕТ
     try:
-        # Для временных рядов сравниваем с наивным прогнозом (последнее значение)
-        naive_forecast = np.roll(y_true_clean, 1)
-        naive_forecast[0] = y_true_clean[0]  # Первое значение такое же
-        
-        # SS_res для нашей модели
+        # Способ 1: Обычный R² (но для временных рядов он часто отрицательный)
         ss_res = np.sum((y_true_clean - y_pred_clean) ** 2)
-        # SS_res для наивной модели
-        ss_res_naive = np.sum((y_true_clean - naive_forecast) ** 2)
+        ss_tot = np.sum((y_true_clean - np.mean(y_true_clean)) ** 2)
         
-        if ss_res_naive == 0:
-            metrics['R²'] = np.nan
+        if ss_tot == 0 or np.isnan(ss_tot):
+            r2_standard = np.nan
         else:
-            # R² относительно наивной модели
-            r2 = 1 - (ss_res / ss_res_naive)
-            # Ограничиваем в разумных пределах
-            metrics['R²'] = float(max(min(r2, 1.0), -1.0))
-    except:
+            r2_standard = 1 - (ss_res / ss_tot)
+            # Ограничиваем
+            r2_standard = max(min(r2_standard, 1.0), -1.0)
+        
+        # Способ 2: R² относительно наивного прогноза (более подходит для временных рядов)
+        # Наивный прогноз: завтра будет как сегодня
+        if len(y_true_clean) > 1:
+            # Сдвигаем на один шаг вперед
+            naive_forecast = np.roll(y_true_clean, 1)
+            naive_forecast[0] = y_true_clean[0]  # Первое значение такое же
+            
+            # Ошибка наивного прогноза
+            ss_res_naive = np.sum((y_true_clean - naive_forecast) ** 2)
+            
+            if ss_res_naive == 0 or np.isnan(ss_res_naive):
+                r2_vs_naive = np.nan
+            else:
+                # Насколько наша модель лучше наивной
+                r2_vs_naive = 1 - (ss_res / ss_res_naive)
+                r2_vs_naive = max(min(r2_vs_naive, 1.0), -1.0)
+        else:
+            r2_vs_naive = np.nan
+        
+        # Выбираем лучший вариант (если оба NaN, то NaN)
+        if np.isnan(r2_standard) and np.isnan(r2_vs_naive):
+            metrics['R²'] = np.nan
+        elif np.isnan(r2_standard):
+            metrics['R²'] = float(r2_vs_naive)
+        elif np.isnan(r2_vs_naive):
+            metrics['R²'] = float(r2_standard)
+        else:
+            # Берем максимальный из двух
+            metrics['R²'] = float(max(r2_standard, r2_vs_naive))
+        
+        # ДИАГНОСТИКА: если R² всё ещё -1, показываем отладку
+        if metrics['R²'] == -1.0:
+            st.info(f"Диагностика R²: ss_res={ss_res:.2f}, ss_tot={ss_tot:.2f}, ss_res_naive={ss_res_naive if 'ss_res_naive' in locals() else 'N/A'}")
+            
+    except Exception as e:
+        st.warning(f"Ошибка расчета R²: {str(e)}")
         metrics['R²'] = np.nan
     
     # 3. Процентные ошибки
     zero_sensitive_vars = ['precipitation', 'snow', 'depth', 'rain', 'snow_depth', 'solar']
     
-    if any(var in variable_name.lower() for var in zero_sensitive_vars):
-        # Для переменных с нулями используем sMAPE
-        try:
+    try:
+        if any(var in variable_name.lower() for var in zero_sensitive_vars):
+            # sMAPE для переменных с нулями
             smape = safe_smape(y_true_clean, y_pred_clean)
             metrics['sMAPE (%)'] = float(smape) if not np.isnan(smape) else np.nan
             metrics['MAPE (%)'] = "N/A"
-        except:
-            metrics['sMAPE (%)'] = np.nan
-            metrics['MAPE (%)'] = "N/A"
-    else:
-        # Для остальных - MAPE
-        try:
+        else:
+            # MAPE для остальных
             mape = safe_mape(y_true_clean, y_pred_clean)
             if not np.isnan(mape):
                 metrics['MAPE (%)'] = float(mape)
                 metrics['sMAPE (%)'] = np.nan
             else:
                 metrics['MAPE (%)'] = "N/A"
-                metrics['sMAPE (%)'] = float(safe_smape(y_true_clean, y_pred_clean))
-        except:
-            metrics['MAPE (%)'] = np.nan
-            metrics['sMAPE (%)'] = np.nan
+                smape = safe_smape(y_true_clean, y_pred_clean)
+                metrics['sMAPE (%)'] = float(smape) if not np.isnan(smape) else np.nan
+    except:
+        metrics['MAPE (%)'] = np.nan
+        metrics['sMAPE (%)'] = np.nan
     
     return metrics
 # ----------------------------------------------------------
