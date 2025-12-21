@@ -380,6 +380,74 @@ def calculate_time_series_metrics(y_true, y_pred, variable_name=""):
         metrics['sMAPE (%)'] = np.nan
     
     return metrics
+
+def calculate_better_metrics(y_true, y_pred):
+    """Альтернативные метрики для временных рядов"""
+    metrics = {}
+    
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    
+    # 1. MASE (Mean Absolute Scaled Error) - ЛУЧШАЯ метрика для временных рядов
+    try:
+        # Наивный прогноз: следующий = предыдущий
+        naive_forecast = np.roll(y_true, 1)
+        naive_forecast[0] = y_true[0]
+        
+        mae_naive = np.mean(np.abs(y_true[1:] - naive_forecast[1:]))
+        mae_model = np.mean(np.abs(y_true - y_pred))
+        
+        if mae_naive > 0:
+            mase = mae_model / mae_naive
+        else:
+            mase = np.nan
+        
+        metrics['MASE'] = float(mase) if not np.isnan(mase) else np.nan
+    except:
+        metrics['MASE'] = np.nan
+    
+    # 2. RMSSE (Root Mean Squared Scaled Error)
+    try:
+        mse_naive = np.mean((y_true[1:] - naive_forecast[1:]) ** 2)
+        mse_model = np.mean((y_true - y_pred) ** 2)
+        
+        if mse_naive > 0:
+            rmsse = np.sqrt(mse_model / mse_naive)
+        else:
+            rmsse = np.nan
+        
+        metrics['RMSSE'] = float(rmsse) if not np.isnan(rmsse) else np.nan
+    except:
+        metrics['RMSSE'] = np.nan
+    
+    # 3. Простое сравнение с наивным прогнозом
+    try:
+        if 'mae_naive' in locals() and 'mae_model' in locals():
+            improvement = (mae_naive - mae_model) / mae_naive * 100
+            metrics['Улучшение (%)'] = float(improvement)
+        else:
+            metrics['Улучшение (%)'] = np.nan
+    except:
+        metrics['Улучшение (%)'] = np.nan
+    
+    return metrics
+
+def calculate_all_metrics(y_true, y_pred, variable_name=""):
+    """Все метрики вместе"""
+    # Основные метрики
+    main_metrics = calculate_time_series_metrics(y_true, y_pred, variable_name)
+    
+    # Альтернативные метрики
+    alt_metrics = calculate_better_metrics(y_true, y_pred)
+    
+    # Объединяем
+    all_metrics = {**main_metrics, **alt_metrics}
+    
+    # Если R² = -1, показываем MASE вместо него
+    if all_metrics.get('R²') == -1.0 and 'MASE' in all_metrics:
+        all_metrics['R² (альтернатива)'] = f"Используйте MASE: {all_metrics['MASE']:.3f}"
+    
+    return all_metrics
 # ----------------------------------------------------------
 # НОВЫЕ ФУНКЦИИ ДЛЯ ОЦЕНКИ ТОЧНОСТИ ПРОГНОЗИРОВАНИЯ
 # ----------------------------------------------------------
