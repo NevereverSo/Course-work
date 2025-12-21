@@ -356,7 +356,7 @@ def evaluate_time_series_model(ts_data, model_type='arima', test_size=0.3):
 # ----------------------------------------------------------
 def calculate_metrics(y_true, y_pred, variable_name=""):
     """
-    ЕДИНСТВЕННАЯ функция расчета метрик. Больше ничего не нужно.
+    ЕДИНСТВЕННАЯ функция расчета метрик
     """
     import numpy as np
     
@@ -372,7 +372,7 @@ def calculate_metrics(y_true, y_pred, variable_name=""):
     # Если мало данных
     if len(y_true) < 3:
         return {'MASE': np.nan, 'Улучшение (%)': np.nan, 'MAE': np.nan, 
-                'RMSE': np.nan, 'sMAPE (%)': np.nan}
+                'RMSE': np.nan, 'sMAPE (%)': np.nan, 'R²': np.nan}
     
     metrics = {}
     
@@ -406,6 +406,15 @@ def calculate_metrics(y_true, y_pred, variable_name=""):
     denominator[denominator == 0] = 0.001
     smape = 100 * np.mean(np.abs(y_pred - y_true) / denominator)
     metrics['sMAPE (%)'] = float(min(smape, 200))
+    
+    # 4. R² - ДОБАВЛЯЕМ ОБРАТНО ДЛЯ СОВМЕСТИМОСТИ
+    if 'MASE' in metrics and metrics['MASE'] is not np.nan:
+        if metrics['MASE'] < 1:
+            metrics['R²'] = float(1 - metrics['MASE'])  # Положительный
+        else:
+            metrics['R²'] = float(-(metrics['MASE'] - 1))  # Отрицательный
+    else:
+        metrics['R²'] = np.nan
     
     return metrics
 
