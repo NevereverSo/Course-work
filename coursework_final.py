@@ -1675,199 +1675,172 @@ else:  # Прогнозирование
                         )
                         
                         if models_to_use:
-                            forecasts = {}
-                            evaluation_results = {}
-                            
-                            for model_name in models_to_use:
-                                # 1. Сначала оцениваем на исторических данных
-                                with st.spinner(f"Оценка точности {model_name}..."):
-                                    metrics, test_data = evaluate_time_series_model(
-                                        ts_data, 
-                                        model_type='arima' if model_name == 'ARIMA' else 'exponential',
-                                        test_size=0.3  # 30% данных для тестирования
-                                    )
-                                    
-                                    if metrics:
-                                        evaluation_results[model_name] = metrics
-                                        
-                                        # Показываем график прогноза на тестовых данных
-                                        if test_data:
-                                            y_true, y_pred, dates = test_data
-                                            
-                                            fig_test = go.Figure()
-                                            fig_test.add_trace(go.Scatter(
-                                                x=dates,
-                                                y=y_true,
-                                                mode='lines',
-                                                name='Фактические значения',
-                                                line=dict(color='blue', width=2)
-                                            ))
-                                            fig_test.add_trace(go.Scatter(
-                                                x=dates,
-                                                y=y_pred,
-                                                mode='lines',
-                                                name=f'Прогноз {model_name}',
-                                                line=dict(color='red', width=2, dash='dash')
-                                            ))
-                                            
-                                            fig_test.update_layout(
-                                                title=f"Тестирование {model_name} (30% последних данных)",
-                                                xaxis_title="Дата",
-                                                yaxis_title=target_col
-                                            )
-                                            
-                                            with st.expander(f"Оценка {model_name}"):
-                                                st.plotly_chart(fig_test, use_container_width=True)
-                                                
-                                                # Таблица метрик
-                                                metrics_df = pd.DataFrame([metrics]).T
-                                                metrics_df.columns = ['Значение']
-                                                st.dataframe(metrics_df.round(4))
-                                
-                                # 2. Затем делаем прогноз в будущее
-                                with st.spinner(f"Прогноз {model_name} на будущее..."):
-                                    if model_name == "ARIMA":
-                                        _, forecast = arima_forecast(ts_data, periods=forecast_days)
-                                    else:
-                                        _, forecast = exponential_smoothing_forecast(ts_data, periods=forecast_days)
-                                    
-                                    forecasts[model_name] = forecast
-                            
-                            # Показываем результаты оценки
-                            if evaluation_results:
-                                st.subheader("📊 Результаты оценки точности")
-                                
-                                # Создаем DataFrame с метриками
-                                eval_df = pd.DataFrame(evaluation_results).T
-                                
-                                # Форматируем для красоты
-                                for col in eval_df.columns:
-                                    if 'MAPE' in col or 'Improvement' in col:
-                                        eval_df[col] = eval_df[col].apply(lambda x: f"{x:.2f}%" if not pd.isna(x) else "N/A")
-                                    elif col == 'R²':
-                                        eval_df[col] = eval_df[col].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
-                                    else:
-                                        eval_df[col] = eval_df[col].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
-                                
-                                st.dataframe(eval_df, use_container_width=True)
-                                
-                                # Интерпретация метрик
-                                st.info("""
-                                **Как интерпретировать метрики:**
-                                - **R² > 0**: Модель лучше среднего
-                                - **MASE < 1**: Модель лучше наивной (y(t) = y(t-1))
-                                - **Improvement > 0%**: Модель лучше наивной на указанный процент
-                                - **MAPE**: Средняя процентная ошибка (чем меньше, тем лучше)
-                                """)
-                            
-                            # Визуализация прогнозов
-                            if forecasts:
-                                st.subheader("Сравнение прогнозов")
-                                
-                                # График
-                                fig_forecast = go.Figure()
-                                
-                                # Исходные данные
-                                fig_forecast.add_trace(go.Scatter(
-                                    x=ts_data['ds'],
-                                    y=ts_data['y'],
-                                    mode='lines',
-                                    name='Исторические данные',
-                                    line=dict(color='#1f77b4', width=2)
-                                ))
-                                
-                                # Цвета для прогнозов
-                                colors = ['#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-                                styles = ['solid', 'dash', 'dot', 'dashdot']
-                                
-                                for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
-                                    color = colors[idx % len(colors)]
-                                    style = styles[idx % len(styles)]
-                                    
-                                    fig_forecast.add_trace(go.Scatter(
-                                        x=forecast_df['ds'],
-                                        y=forecast_df['yhat'],
-                                        mode='lines',
-                                        name=f'Прогноз {model_name}',
-                                        line=dict(color=color, width=2.5, dash=style)
-                                    ))
-                                
-                                fig_forecast.update_layout(
-                                    title=f"Прогноз {target_col} на {forecast_days} дней - {selected_city}",
-                                    xaxis_title="Дата",
-                                    yaxis_title=target_col,
-                                    hovermode='x unified'
-                                )
-                                
-                                st.plotly_chart(fig_forecast, use_container_width=True)
-                                
-                                # Метрики точности (если есть бэктестинг)
-                                if backtest_results:
-                                    st.subheader("Точность прогнозирования (тестирование на 30% данных)")
-                                    
-                                    # Создаем таблицу
-                                    backtest_df = pd.DataFrame(backtest_results).T
-                                    
-                                    # Форматируем
-                                    def format_value(val):
-                                        if isinstance(val, (int, float)):
-                                            if np.isnan(val):
-                                                return "N/A"
-                                            elif abs(val) > 1e6:
-                                                return "Ошибка"
-                                            else:
-                                                return f"{val:.4f}"
-                                        else:
-                                            return str(val)
-                                    
-                                    for col in backtest_df.columns:
-                                        backtest_df[col] = backtest_df[col].apply(format_value)
-                                    
-                                    st.dataframe(backtest_df, use_container_width=True)
-                                  
-                                else:
-                                    st.info("Для оценки точности отключите 'Быстрый режим'")
-                                
-                                # Таблица прогнозов
-                                st.subheader("Будущие значения")
-                                
-                                forecast_table = pd.DataFrame()
-                                for model_name, forecast_df in forecasts.items():
-                                    temp_df = forecast_df.copy()
-                                    temp_df.columns = ['Дата', model_name]
-                                    temp_df = temp_df.set_index('Дата')
-                                    
-                                    if forecast_table.empty:
-                                        forecast_table = temp_df
-                                    else:
-                                        forecast_table = forecast_table.join(temp_df, how='outer')
-                                
-                                if not forecast_table.empty:
-                                    forecast_table = forecast_table.sort_index()
-                                    st.dataframe(
-                                        forecast_table.round(2),
-                                        use_container_width=True
-                                    )
-                                    
-                                    # Сводная статистика
-                                    st.subheader("Сводная статистика прогнозов")
-                                    stats_data = []
-                                    for model_name in forecasts.keys():
-                                        values = forecast_table[model_name].dropna().values
-                                        if len(values) > 0:
-                                            stats_data.append([
-                                                np.mean(values),
-                                                np.std(values),
-                                                np.min(values),
-                                                np.max(values),
-                                                (np.std(values) / max(abs(np.mean(values)), 0.001)) * 100
-                                            ])
-                                        else:
-                                            stats_data.append(["N/A"] * 5)
-                                    
-                                    stats_df = pd.DataFrame(
-                                        stats_data,
-                                        index=forecasts.keys(),
-                                        columns=['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум', 'Коэф. вариации (%)']
-                                    )
-                                    st.dataframe(stats_df.round(2), use_container_width=True)
+    forecasts = {}
+    evaluation_results = {}  # <-- ИЗМЕНИЛИ ИМЯ ПЕРЕМЕННОЙ
+    
+    for model_name in models_to_use:
+        # 1. Сначала оцениваем на исторических данных
+        with st.spinner(f"Оценка точности {model_name}..."):
+            metrics, test_data = evaluate_time_series_model(
+                ts_data, 
+                model_type='arima' if model_name == 'ARIMA' else 'exponential',
+                test_size=0.3  # 30% данных для тестирования
+            )
+            
+            if metrics:
+                evaluation_results[model_name] = metrics
+                
+                # Показываем график прогноза на тестовых данных
+                if test_data:
+                    y_true, y_pred, dates = test_data
+                    
+                    fig_test = go.Figure()
+                    fig_test.add_trace(go.Scatter(
+                        x=dates,
+                        y=y_true,
+                        mode='lines',
+                        name='Фактические значения',
+                        line=dict(color='blue', width=2)
+                    ))
+                    fig_test.add_trace(go.Scatter(
+                        x=dates,
+                        y=y_pred,
+                        mode='lines',
+                        name=f'Прогноз {model_name}',
+                        line=dict(color='red', width=2, dash='dash')
+                    ))
+                    
+                    fig_test.update_layout(
+                        title=f"Тестирование {model_name} (30% последних данных)",
+                        xaxis_title="Дата",
+                        yaxis_title=target_col
+                    )
+                    
+                    with st.expander(f"Оценка {model_name}"):
+                        st.plotly_chart(fig_test, use_container_width=True)
+                        
+                        # Таблица метрик
+                        metrics_df = pd.DataFrame([metrics]).T
+                        metrics_df.columns = ['Значение']
+                        st.dataframe(metrics_df.round(4))
+        
+        # 2. Затем делаем прогноз в будущее
+        with st.spinner(f"Прогноз {model_name} на будущее..."):
+            if model_name == "ARIMA":
+                _, forecast = arima_forecast(ts_data, periods=forecast_days)
+            else:
+                _, forecast = exponential_smoothing_forecast(ts_data, periods=forecast_days)
+            
+            forecasts[model_name] = forecast
+    
+    # Показываем результаты оценки
+    if evaluation_results:  # <-- ИЗМЕНИЛИ НА evaluation_results
+        st.subheader("📊 Результаты оценки точности")
+        
+        # Создаем DataFrame с метриками
+        eval_df = pd.DataFrame(evaluation_results).T
+        
+        # Форматируем для красоты
+        for col in eval_df.columns:
+            if 'MAPE' in col or 'Improvement' in col:
+                eval_df[col] = eval_df[col].apply(lambda x: f"{x:.2f}%" if not pd.isna(x) else "N/A")
+            elif col == 'R²':
+                eval_df[col] = eval_df[col].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+            else:
+                eval_df[col] = eval_df[col].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+        
+        st.dataframe(eval_df, use_container_width=True)
+        
+        # Интерпретация метрик
+        st.info("""
+        **Как интерпретировать метрики:**
+        - **R² > 0**: Модель лучше среднего
+        - **MASE < 1**: Модель лучше наивной (y(t) = y(t-1))
+        - **Improvement > 0%**: Модель лучше наивной на указанный процент
+        - **MAPE**: Средняя процентная ошибка (чем меньше, тем лучше)
+        """)
+    
+    # Визуализация прогнозов (оставляем оригинальный код)
+    if forecasts:
+        st.subheader("Сравнение прогнозов")
+        
+        # График
+        fig_forecast = go.Figure()
+        
+        # Исходные данные
+        fig_forecast.add_trace(go.Scatter(
+            x=ts_data['ds'],
+            y=ts_data['y'],
+            mode='lines',
+            name='Исторические данные',
+            line=dict(color='#1f77b4', width=2)
+        ))
+        
+        # Цвета для прогнозов
+        colors = ['#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        styles = ['solid', 'dash', 'dot', 'dashdot']
+        
+        for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
+            color = colors[idx % len(colors)]
+            style = styles[idx % len(styles)]
+            
+            fig_forecast.add_trace(go.Scatter(
+                x=forecast_df['ds'],
+                y=forecast_df['yhat'],
+                mode='lines',
+                name=f'Прогноз {model_name}',
+                line=dict(color=color, width=2.5, dash=style)
+            ))
+        
+        fig_forecast.update_layout(
+            title=f"Прогноз {target_col} на {forecast_days} дней - {selected_city}",
+            xaxis_title="Дата",
+            yaxis_title=target_col,
+            hovermode='x unified'
+        )
+        
+        st.plotly_chart(fig_forecast, use_container_width=True)
+        
+        # Таблица прогнозов (оставляем оригинальный код)
+        st.subheader("Будущие значения")
+        
+        forecast_table = pd.DataFrame()
+        for model_name, forecast_df in forecasts.items():
+            temp_df = forecast_df.copy()
+            temp_df.columns = ['Дата', model_name]
+            temp_df = temp_df.set_index('Дата')
+            
+            if forecast_table.empty:
+                forecast_table = temp_df
+            else:
+                forecast_table = forecast_table.join(temp_df, how='outer')
+        
+        if not forecast_table.empty:
+            forecast_table = forecast_table.sort_index()
+            st.dataframe(
+                forecast_table.round(2),
+                use_container_width=True
+            )
+            
+            # Сводная статистика (оставляем оригинальный код)
+            st.subheader("Сводная статистика прогнозов")
+            stats_data = []
+            for model_name in forecasts.keys():
+                values = forecast_table[model_name].dropna().values
+                if len(values) > 0:
+                    stats_data.append([
+                        np.mean(values),
+                        np.std(values),
+                        np.min(values),
+                        np.max(values),
+                        (np.std(values) / max(abs(np.mean(values)), 0.001)) * 100
+                    ])
+                else:
+                    stats_data.append(["N/A"] * 5)
+            
+            stats_df = pd.DataFrame(
+                stats_data,
+                index=forecasts.keys(),
+                columns=['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум', 'Коэф. вариации (%)']
+            )
+            st.dataframe(stats_df.round(2), use_container_width=True)
