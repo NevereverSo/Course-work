@@ -90,7 +90,7 @@ def prepare_time_series_data(df, target_col, date_col='date'):
     return ts_data
 
 @st.cache_data(ttl=1800, max_entries=3)
-def arima_forecast(ts_data, periods=10, order=(1,1,1)):
+def arima_forecast(ts_data, periods=30, order=(1,1,1)):
     """
     Быстрое прогнозирование ARIMA
     """
@@ -101,6 +101,7 @@ def arima_forecast(ts_data, periods=10, order=(1,1,1)):
         max_points = 50  # Всего 50 точек для скорости
         if len(ts_series) > max_points:
             ts_series = ts_series.iloc[-max_points:]
+            st.info(f"ARIMA: используем {max_points} последних точек")
         
         # Упрощенная ARIMA с фиксированными параметрами
         model = ARIMA(ts_series, order=order)
@@ -131,7 +132,7 @@ def arima_forecast(ts_data, periods=10, order=(1,1,1)):
         return None, None
 
 @st.cache_data(ttl=1800, max_entries=3)
-def exponential_smoothing_forecast(ts_data, periods=10):
+def exponential_smoothing_forecast(ts_data, periods=30):
     """
     ПРОСТАЯ И РАБОЧАЯ версия Exponential Smoothing
     """
@@ -269,6 +270,7 @@ def simple_forecast_fallback(ts_data, periods=30):
             'ds': pd.date_range(start='2023-01-01', periods=periods, freq='D'),
             'yhat': np.zeros(periods)
         })
+
 # ----------------------------------------------------------
 # ИСПРАВЛЕННЫЕ МЕТРИКИ ДЛЯ ВРЕМЕННЫХ РЯДОВ
 # ----------------------------------------------------------
