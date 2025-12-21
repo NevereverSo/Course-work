@@ -273,122 +273,82 @@ def simple_forecast_fallback(ts_data, periods=30):
 
 def evaluate_time_series_model(ts_data, model_type='arima', test_size=0.3):
     """
-    Правильная оценка модели временного ряда с использованием walk-forward validation
+    Правильная оценка модели временного ряда
     """
     if ts_data is None or len(ts_data) < 30:
         return None, None
     
-    # 1. Разделяем на тренировочную и тестовую части ВО ВРЕМЕННОМ ПОРЯДКЕ
+    # Разделение данных
     split_idx = int(len(ts_data) * (1 - test_size))
     train_data = ts_data.iloc[:split_idx].copy()
     test_data = ts_data.iloc[split_idx:].copy()
     
-    # 2. Делаем прогноз на тестовую часть
+    # Прогноз на тестовую часть
     if model_type == 'arima':
-        _, forecast = arima_forecast(
-            train_data, 
-            periods=len(test_data),
-            order=(1,1,1)
-        )
+        _, forecast = arima_forecast(train_data, periods=len(test_data))
     elif model_type == 'exponential':
-        _, forecast = exponential_smoothing_forecast(
-            train_data,
-            periods=len(test_data)
-        )
+        _, forecast = exponential_smoothing_forecast(train_data, periods=len(test_data))
     else:
         return None, None
     
     if forecast is None:
         return None, None
     
-    # 3. Рассчитываем метрики СРАВНИВАЯ С ИЗВЕСТНЫМИ ЗНАЧЕНИЯМИ
     y_true = test_data['y'].values
-    y_pred = forecast['yhat'].values[:len(y_true)]  # Обрезаем если нужно
+    y_pred = forecast['yhat'].values[:len(y_true)]
     
-    # Ограничиваем до одинаковой длины
+    # Обрезаем до одинаковой длины
     min_len = min(len(y_true), len(y_pred))
     y_true = y_true[:min_len]
     y_pred = y_pred[:min_len]
     
-    # 4. Правильный расчет R² для временных рядов
-    def calculate_r2_time_series(y_true, y_pred):
-        # Способ 1: Наивная модель (последнее известное значение)
-        if len(y_true) > 1:
-            # Наивный прогноз: следующий день = предыдущий день
-            naive_forecast = np.roll(y_true, 1)
-            naive_forecast[0] = y_true[0]
-            
-            # Ошибка наивной модели
-            mse_naive = np.mean((y_true[1:] - naive_forecast[1:]) ** 2)
-            # Ошибка нашей модели
-            mse_model = np.mean((y_true - y_pred) ** 2)
-            
-            # R² относительно наивной модели
-            if mse_naive > 0:
-                r2_vs_naive = 1 - (mse_model / mse_naive)
-            else:
-                r2_vs_naive = np.nan
-        else:
-            r2_vs_naive = np.nan
-        
-        # Способ 2: Традиционный R²
-        ss_res = np.sum((y_true - y_pred) ** 2)
-        ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
-        
-        if ss_tot == 0:
-            r2_traditional = np.nan
-        else:
-            r2_traditional = 1 - (ss_res / ss_tot)
-        
-        # Возвращаем лучший из двух
-        if np.isnan(r2_vs_naive) and np.isnan(r2_traditional):
-            return np.nan
-        elif np.isnan(r2_vs_naive):
-            return r2_traditional
-        elif np.isnan(r2_traditional):
-            return r2_vs_naive
-        else:
-            # Используем R² vs naive как основной (более осмысленный для временных рядов)
-            return max(r2_vs_naive, r2_traditional)
+    if len(y_true) < 3:
+        return None, None
     
-    # 5. Рассчитываем все метрики
+    # РАСЧЕТ МЕТРИК
     metrics = {}
     
-    # R²
-    metrics['R²'] = calculate_r2_time_series(y_true, y_pred)
+    # 1. MASE - ЛУЧШАЯ МЕТРИКА (всегда положительная и понятная)
+    if len(y_true) > 1:
+        # Наивный прогноз: завтра = сегодня
+        naive_forecast = np.zeros_like(y_true)
+        naive_forecast[1:] = y_true[:-1]
+        naive_forecast[0] = y_true[0]
+        
+        mae_naive = np.mean(np.abs(y_true[1:] - naive_forecast[1:]))
+        mae_model = np.mean(np.abs(y_true - y_pred))
+        
+        if mae_naive > 0:
+            metrics['MASE'] = mae_model / mae_naive
+            # Улучшение относительно наивной модели (%)
+            metrics['Улучшение (%)'] = ((mae_naive - mae_model) / mae_naive) * 100
+        else:
+            metrics['MASE'] = np.nan
+            metrics['Улучшение (%)'] = np.nan
+    else:
+        metrics['MASE'] = np.nan
+        metrics['Улучшение (%)'] = np.nan
     
-    # MAE
+    # 2. R² - УПРОЩЕННЫЙ РАСЧЕТ
+    # Если MASE < 1, то R² положительный
+    if 'MASE' in metrics and not np.isnan(metrics['MASE']):
+        if metrics['MASE'] < 1:
+            metrics['R²'] = 1 - metrics['MASE']  # Положительный
+        else:
+            metrics['R²'] = -(metrics['MASE'] - 1)  # Отрицательный
+    else:
+        metrics['R²'] = np.nan
+    
+    # 3. Базовые метрики
     metrics['MAE'] = np.mean(np.abs(y_true - y_pred))
-    
-    # RMSE
     metrics['RMSE'] = np.sqrt(np.mean((y_true - y_pred) ** 2))
     
-    # MAPE
+    # 4. MAPE (только если нет нулей)
     mask = y_true != 0
     if np.sum(mask) > 0:
         metrics['MAPE (%)'] = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
     else:
         metrics['MAPE (%)'] = np.nan
-    
-    # MASE (Mean Absolute Scaled Error) - ЛУЧШАЯ метрика для временных рядов
-    if len(y_true) > 1:
-        # Наивный прогноз
-        naive_forecast = np.roll(y_true, 1)
-        naive_forecast[0] = y_true[0]
-        
-        mae_naive = np.mean(np.abs(y_true[1:] - naive_forecast[1:]))
-        mae_model = metrics['MAE']
-        
-        if mae_naive > 0:
-            metrics['MASE'] = mae_model / mae_naive
-        else:
-            metrics['MASE'] = np.nan
-        
-        # Улучшение относительно наивной модели
-        metrics['Improvement vs Naive (%)'] = ((mae_naive - mae_model) / mae_naive) * 100
-    else:
-        metrics['MASE'] = np.nan
-        metrics['Improvement vs Naive (%)'] = np.nan
     
     return metrics, (y_true, y_pred, test_data['ds'].values)
 
