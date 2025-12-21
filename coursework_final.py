@@ -57,9 +57,6 @@ def load_data():
     
     return countries_df, cities_df, daily_df
 
-# Загрузка данных
-countries_df, cities_df, daily_df = load_data()
-
 # ----------------------------------------------------------
 # ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ ПО ГОРОДАМ
 # ----------------------------------------------------------
@@ -184,6 +181,12 @@ def prepare_time_series_data(df, target_col, date_col='date'):
     # Интерполяция пропусков
     ts_data['y'] = ts_data['y'].interpolate(method='linear')
     
+    # Для переменных, которые могут быть нулевыми, добавляем небольшое значение
+    # чтобы избежать деления на ноль при расчете MAPE
+    zero_threshold_vars = ['precipitation', 'snow', 'depth', 'rain', 'snow_depth']
+    if any(var in target_col.lower() for var in zero_threshold_vars):
+        ts_data['y'] = ts_data['y'] + 0.1  # Добавляем 0.1 чтобы избежать нулей
+    
     return ts_data
 
 @st.cache_data(ttl=1800, max_entries=3)
@@ -247,6 +250,96 @@ def exponential_smoothing_forecast(ts_data, periods=30):
     except Exception as e:
         st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
         return None, None
+
+# ----------------------------------------------------------
+# НОВЫЕ ФУНКЦИИ ДЛЯ ОЦЕНКИ ТОЧНОСТИ ПРОГНОЗИРОВАНИЯ
+# ----------------------------------------------------------
+def safe_mape(y_true, y_pred):
+    """
+    Безопасный расчет MAPE с обработкой нулевых и близких к нулю значений
+    """
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    
+    # Фильтруем нулевые значения
+    mask = (y_true != 0) & (~np.isnan(y_true)) & (~np.isnan(y_pred))
+    
+    if np.sum(mask) == 0:
+        return np.nan
+    
+    y_true_filtered = y_true[mask]
+    y_pred_filtered = y_pred[mask]
+    
+    # Рассчитываем MAPE только для ненулевых значений
+    ape = np.abs((y_true_filtered - y_pred_filtered) / y_true_filtered) * 100
+    
+    # Отсекаем выбросы (более 500%)
+    ape = ape[ape <= 500]
+    
+    if len(ape) == 0:
+        return np.nan
+    
+    return np.mean(ape)
+
+def safe_smape(y_true, y_pred):
+    """
+    Расчет sMAPE (Symmetric MAPE) - более устойчивая метрика
+    """
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    
+    mask = (~np.isnan(y_true)) & (~np.isnan(y_pred))
+    y_true = y_true[mask]
+    y_pred = y_pred[mask]
+    
+    if len(y_true) == 0:
+        return np.nan
+    
+    numerator = np.abs(y_pred - y_true)
+    denominator = (np.abs(y_true) + np.abs(y_pred)) / 2
+    
+    # Избегаем деления на ноль
+    denominator[denominator == 0] = np.finfo(float).eps
+    
+    smape_values = 100 * numerator / denominator
+    
+    # Отсекаем выбросы
+    smape_values = smape_values[smape_values <= 200]
+    
+    if len(smape_values) == 0:
+        return np.nan
+    
+    return np.mean(smape_values)
+
+def calculate_forecast_metrics(y_true, y_pred, variable_name=""):
+    """
+    Расчет всех метрик точности прогнозирования с учетом особенностей переменной
+    """
+    metrics = {}
+    
+    # Базовые метрики
+    metrics['RMSE'] = np.sqrt(mean_squared_error(y_true, y_pred))
+    metrics['MAE'] = mean_absolute_error(y_true, y_pred)
+    
+    # R² score
+    metrics['R²'] = r2_score(y_true, y_pred)
+    
+    # Для переменных с возможными нулевыми значениями используем sMAPE
+    zero_sensitive_vars = ['precipitation', 'snow', 'depth', 'rain', 'snow_depth', 'solar']
+    
+    if any(var in variable_name.lower() for var in zero_sensitive_vars):
+        metrics['sMAPE (%)'] = safe_smape(y_true, y_pred)
+        metrics['MAPE (%)'] = "N/A (используйте sMAPE)"
+    else:
+        # Для остальных переменных можно использовать MAPE
+        mape_val = safe_mape(y_true, y_pred)
+        if not np.isnan(mape_val):
+            metrics['MAPE (%)'] = mape_val
+        else:
+            metrics['MAPE (%)'] = "N/A (нулевые значения)"
+            metrics['sMAPE (%)'] = safe_smape(y_true, y_pred)
+    
+    return metrics
 
 # ----------------------------------------------------------
 # ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ ДАТ В ЧИСЛОВОЙ ФОРМАТ
@@ -671,11 +764,15 @@ elif page == "Анализ данных":
                         model.fit(X_train, y_train)
                         y_pred = model.predict(X_test)
                         
+                        # Используем безопасный расчет метрик
+                        metrics = calculate_forecast_metrics(y_test, y_pred, target)
+                        
                         results[name] = {
-                            'R²': r2_score(y_test, y_pred),
-                            'MAE': mean_absolute_error(y_test, y_pred),
-                            'MAPE': mean_absolute_percentage_error(y_test, y_pred) * 100,
-                            'RMSE': np.sqrt(mean_squared_error(y_test, y_pred))
+                            'R²': metrics['R²'],
+                            'MAE': metrics['MAE'],
+                            'RMSE': metrics['RMSE'],
+                            'MAPE (%)': metrics.get('MAPE (%)', 'N/A'),
+                            'sMAPE (%)': metrics.get('sMAPE (%)', 'N/A')
                         }
                     
                     # Сравнительная таблица
@@ -787,11 +884,12 @@ elif page == "Анализ данных":
                             y_pred_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
                             
                             # Расчет метрик
+                            report = classification_report(y_test, y_pred, output_dict=True)
                             results[name] = {
                                 'Accuracy': accuracy_score(y_test, y_pred),
-                                'Precision': classification_report(y_test, y_pred, output_dict=True)['weighted avg']['precision'],
-                                'Recall': classification_report(y_test, y_pred, output_dict=True)['weighted avg']['recall'],
-                                'F1-Score': classification_report(y_test, y_pred, output_dict=True)['weighted avg']['f1-score']
+                                'Precision': report['weighted avg']['precision'],
+                                'Recall': report['weighted avg']['recall'],
+                                'F1-Score': report['weighted avg']['f1-score']
                             }
                         
                         # Сравнительная таблица
@@ -978,7 +1076,7 @@ elif page == "Анализ данных":
                         st.plotly_chart(fig_scatter, use_container_width=True)
 
 # ==========================================================
-# PAGE 3 — ПРОГНОЗИРОВАНИЕ
+# PAGE 3 — ПРОГНОЗИРОВАНИЕ (С ИСПРАВЛЕННЫМИ МЕТРИКАМИ ТОЧНОСТИ)
 # ==========================================================
 else:  # Прогнозирование
     
@@ -1022,6 +1120,17 @@ else:  # Прогнозирование
                 # Предупреждение если выбраны "Все города"
                 if selected_city == "Все города":
                     st.warning("⚠️ Для прогнозирования выбран режим 'Все города'. Анализ будет проводиться по сводным данным всех городов.")
+                
+                # Информация о переменной
+                if target_col:
+                    st.info(f"""
+                    **Информация о переменной {target_col}:**
+                    - Среднее: {filtered_df[target_col].mean():.2f}
+                    - Медиана: {filtered_df[target_col].median():.2f}
+                    - Минимум: {filtered_df[target_col].min():.2f}
+                    - Максимум: {filtered_df[target_col].max():.2f}
+                    - Дней с нулевыми значениями: {(filtered_df[target_col] == 0).sum()} ({(filtered_df[target_col] == 0).sum() / len(filtered_df) * 100:.1f}%)
+                    """)
                 
                 # Подготовка данных
                 if target_col:
@@ -1118,27 +1227,50 @@ else:  # Прогнозирование
                                                 )
                                             
                                             if backtest_forecast is not None:
-                                                mape = mean_absolute_percentage_error(
-                                                    test_data['y'], 
-                                                    backtest_forecast['yhat']
-                                                ) * 100
-                                                backtest_results[model_name] = {
-                                                    'MAPE (%)': mape,
-                                                    'RMSE': np.sqrt(mean_squared_error(
-                                                        test_data['y'], 
-                                                        backtest_forecast['yhat']
-                                                    ))
-                                                }
+                                                # Используем безопасные метрики
+                                                metrics = calculate_forecast_metrics(
+                                                    test_data['y'].values,
+                                                    backtest_forecast['yhat'].values,
+                                                    target_col
+                                                )
+                                                
+                                                backtest_results[model_name] = metrics
                             
                             # Визуализация прогнозов
                             if forecasts:
                                 st.subheader("Сравнение прогнозов")
                                 
-                                # ДОБАВЛЕНА ТАБЛИЦА С ТОЧНОСТЬЮ
+                                # ДОБАВЛЕНА ТАБЛИЦА С ТОЧНОСТЬЮ (с правильными метриками)
                                 if backtest_results:
-                                    st.subheader("Точность прогнозирования (бэктестинг)")
-                                    backtest_df = pd.DataFrame(backtest_results).T.round(3)
+                                    st.subheader("Точность прогнозирования (бэктестинг на последних 30 днях)")
+                                    
+                                    # Создаем таблицу с метриками
+                                    backtest_df = pd.DataFrame(backtest_results).T
+                                    
+                                    # Форматируем числовые значения
+                                    numeric_cols_backtest = ['RMSE', 'MAE', 'R²', 'MAPE (%)', 'sMAPE (%)']
+                                    for col in numeric_cols_backtest:
+                                        if col in backtest_df.columns:
+                                            if col == 'R²':
+                                                backtest_df[col] = backtest_df[col].apply(lambda x: f"{x:.4f}" if isinstance(x, (int, float)) else x)
+                                            else:
+                                                backtest_df[col] = backtest_df[col].apply(lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x)
+                                    
                                     st.dataframe(backtest_df, use_container_width=True)
+                                    
+                                    # Объяснение метрик
+                                    with st.expander("📊 Объяснение метрик точности"):
+                                        st.markdown("""
+                                        **Метрики точности прогнозирования:**
+                                        
+                                        - **RMSE (Root Mean Square Error):** Среднеквадратичная ошибка. Чем меньше, тем лучше.
+                                        - **MAE (Mean Absolute Error):** Средняя абсолютная ошибка. Чем меньше, тем лучше.
+                                        - **R² (Coefficient of Determination):** Доля объясненной дисперсии. От 0 до 1, чем ближе к 1, тем лучше.
+                                        - **MAPE (%):** Средняя абсолютная процентная ошибка. Хорошо для ненулевых значений.
+                                        - **sMAPE (%):** Симметричная MAPE. Более устойчива к нулевым значениям.
+                                        
+                                        **Примечание:** Для переменных с нулевыми значениями (осадки, снег и т.д.) рекомендуется использовать **sMAPE**.
+                                        """)
                                 
                                 fig_forecast = go.Figure()
                                 
@@ -1225,7 +1357,7 @@ else:  # Прогнозирование
                                             forecast_df['yhat'].std(),
                                             forecast_df['yhat'].min(),
                                             forecast_df['yhat'].max(),
-                                            forecast_df['yhat'].std() / forecast_df['yhat'].mean() * 100  # CV%
+                                            forecast_df['yhat'].std() / max(abs(forecast_df['yhat'].mean()), 0.001) * 100  # CV% с защитой от деления на ноль
                                         ]
                                     
                                     stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум', 'Коэф. вариации (%)']
