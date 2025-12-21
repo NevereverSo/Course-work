@@ -587,7 +587,7 @@ if page == "Визуализация данных":
                                 mode='markers',
                                 name=city,
                                 marker=dict(
-                                    color='#FFC618',
+                                    color=color,
                                     size=6,
                                     opacity=0.6
                                 )
@@ -600,7 +600,7 @@ if page == "Визуализация данных":
                             mode='markers',
                             name='Данные',
                             marker=dict(
-                                color='rgba(100, 100, 100, 0.3)',  # Серый с прозрачностью 30%
+                                color='#FFC618',  # Серый с прозрачностью 30%
                                 size=6
                             ),
                             opacity=0.3
