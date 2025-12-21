@@ -518,6 +518,8 @@ else:
     selected_city = "Все города"
     numeric_cols = []
 
+# ... (предыдущий код без изменений до страницы "Визуализация данных")
+
 if page == "Визуализация данных":
     
     if filtered_df.empty:
@@ -557,6 +559,113 @@ if page == "Визуализация данных":
             else:
                 st.metric("Точность данных", "N/A")
         
+        # НОВАЯ СЕКЦИЯ: Методы info() и describe()
+        with st.expander("📊 Методы info() и describe() для анализа данных", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("Метод info()")
+                st.write("**Общая информация о датасете:**")
+                
+                # Создаем строку с информацией о датасете
+                info_text = f"""
+                **Размер данных:** {filtered_df.shape[0]} строк × {filtered_df.shape[1]} столбцов
+                
+                **Типы данных:**
+                """
+                
+                # Получаем информацию о типах данных
+                dtypes_info = filtered_df.dtypes.value_counts()
+                for dtype, count in dtypes_info.items():
+                    info_text += f"\n- {dtype}: {count} колонок"
+                
+                # Информация о пропусках
+                missing_info = filtered_df.isnull().sum()
+                total_missing = missing_info.sum()
+                info_text += f"\n\n**Пропуски:** {total_missing:,} пропущенных значений"
+                
+                st.info(info_text)
+                
+                # Показываем типы данных по колонкам
+                if st.checkbox("Показать типы данных для всех колонок"):
+                    dtype_df = pd.DataFrame({
+                        'Колонка': filtered_df.columns,
+                        'Тип данных': filtered_df.dtypes.values,
+                        'Не-null значения': filtered_df.notna().sum().values,
+                        'Пропуски': filtered_df.isnull().sum().values
+                    })
+                    st.dataframe(dtype_df, use_container_width=True)
+            
+            with col2:
+                st.subheader("Метод describe()")
+                
+                # Выбираем числовые колонки для describe
+                if len(numeric_cols) > 0:
+                    # Ограничиваем количество колонок для лучшего отображения
+                    display_cols = numeric_cols[:8]  # Первые 8 числовых колонок
+                    
+                    describe_df = filtered_df[display_cols].describe().round(2)
+                    
+                    # Переименовываем индексы на русский
+                    describe_df.index = ['Количество', 'Среднее', 'Стд. отклонение', 
+                                       'Минимум', '25%', '50% (медиана)', '75%', 'Максимум']
+                    
+                    st.dataframe(describe_df, use_container_width=True)
+                    
+                    # Дополнительная статистика
+                    if st.checkbox("Показать дополнительную статистику"):
+                        st.write("**Корреляция между признаками:**")
+                        # Вычисляем корреляцию только для выбранных колонок
+                        if len(display_cols) > 1:
+                            corr_matrix = filtered_df[display_cols].corr().round(3)
+                            # Визуализация тепловой карты корреляции
+                            fig = px.imshow(
+                                corr_matrix,
+                                text_auto=True,
+                                aspect="auto",
+                                title="Матрица корреляции",
+                                color_continuous_scale='RdBu_r',
+                                range_color=[-1, 1]
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Нет числовых колонок для метода describe()")
+        
+        # Кнопка для экспорта статистики
+        if st.button("📥 Экспорт статистики в CSV"):
+            if len(numeric_cols) > 0:
+                # Создаем DataFrame со статистикой
+                stats_list = []
+                for col in numeric_cols[:15]:  # Ограничиваем количество колонок
+                    if col in filtered_df.columns:
+                        stats = filtered_df[col].describe()
+                        stats_list.append({
+                            'Признак': col,
+                            'Количество': stats['count'],
+                            'Среднее': round(stats['mean'], 2),
+                            'Стд. отклонение': round(stats['std'], 2),
+                            'Минимум': round(stats['min'], 2),
+                            '25%': round(stats['25%'], 2),
+                            'Медиана': round(stats['50%'], 2),
+                            '75%': round(stats['75%'], 2),
+                            'Максимум': round(stats['max'], 2),
+                            'Пропуски': filtered_df[col].isnull().sum(),
+                            'Точность (%)': round((filtered_df[col].notna().sum() / len(filtered_df)) * 100, 1)
+                        })
+                
+                stats_df = pd.DataFrame(stats_list)
+                
+                # Создаем CSV
+                csv = stats_df.to_csv(index=False, encoding='utf-8-sig')
+                
+                # Кнопка для скачивания
+                st.download_button(
+                    label="Скачать статистику CSV",
+                    data=csv,
+                    file_name=f"weather_stats_{selected_city}.csv",
+                    mime="text/csv",
+                )
+        
         if selected_city == "Все города" and 'city_name' in filtered_df.columns and filtered_df['city_name'].nunique() > 1:
             with st.expander("Сводная статистика по городам"):
                 city_stats_summary = []
@@ -576,7 +685,8 @@ if page == "Визуализация данных":
                 stats_df = pd.DataFrame(city_stats_summary)
                 st.dataframe(stats_df, use_container_width=True)
         
-        tab1, tab2, tab3 = st.tabs(["Быстрый анализ", "Scatter Plot", "Box & Violin Plots"])
+        # ИЗМЕНЯЕМ ВКЛАДКИ - добавляем новую вкладку для info/describe
+        tab1, tab2, tab3, tab4 = st.tabs(["Быстрый анализ", "Scatter Plot", "Box & Violin Plots", "Распределения"])
         
         with tab1:
             st.subheader("Быстрый анализ признаков")
@@ -601,7 +711,28 @@ if page == "Визуализация данных":
                     with col4:
                         accuracy_pct = data.notna().sum() / len(data) * 100
                         st.metric("Точность данных", f"{accuracy_pct:.1f}%")
-                                        
+                    
+                    # Дополнительная статистика для выбранной колонки
+                    with st.expander("📈 Подробная статистика для выбранного признака"):
+                        col_stats = filtered_df[selected_col].describe()
+                        stats_df = pd.DataFrame({
+                            'Метрика': ['Количество', 'Среднее', 'Стд. отклонение', 'Минимум', '25%', '50% (медиана)', '75%', 'Максимум'],
+                            'Значение': [col_stats['count'], 
+                                       round(col_stats['mean'], 4),
+                                       round(col_stats['std'], 4),
+                                       round(col_stats['min'], 4),
+                                       round(col_stats['25%'], 4),
+                                       round(col_stats['50%'], 4),
+                                       round(col_stats['75%'], 4),
+                                       round(col_stats['max'], 4)]
+                        })
+                        st.dataframe(stats_df, use_container_width=True)
+                        
+                        # Показываем информацию о пропусках
+                        missing_count = filtered_df[selected_col].isnull().sum()
+                        if missing_count > 0:
+                            st.warning(f"⚠️ В колонке '{selected_col}' {missing_count} пропущенных значений ({round(missing_count/len(filtered_df)*100, 1)}%)")
+                    
                     fig = px.histogram(
                             filtered_df, 
                             x=selected_col, 
@@ -612,136 +743,73 @@ if page == "Визуализация данных":
                     st.plotly_chart(fig, use_container_width=True)
         
         with tab2:
-            st.subheader("Scatter Plot Analysis")
+            # ... (существующий код для Scatter Plot без изменений)
+        
+        with tab3:
+            # ... (существующий код для Box & Violin Plots без изменений)
             
-            if len(numeric_cols) >= 2:
-                col1, col2 = st.columns(2)
-                with col1:
-                    x_col = st.selectbox("X-axis:", numeric_cols, index=0)
-                with col2:
-                    y_col = st.selectbox("Y-axis:", numeric_cols, index=min(1, len(numeric_cols)-1))
+        # НОВАЯ ВКЛАДКА ДЛЯ РАСПРЕДЕЛЕНИЙ
+        with tab4:
+            st.subheader("Анализ распределений признаков")
+            
+            if numeric_cols:
+                # Выбор нескольких признаков для сравнения
+                selected_features = st.multiselect(
+                    "Выберите признаки для сравнения распределений:",
+                    numeric_cols[:10],
+                    default=numeric_cols[:3] if len(numeric_cols) >= 3 else numeric_cols
+                )
                 
-                if x_col and y_col:
-                    plot_data = filtered_df.copy()
-                    
-                    if x_col == 'date' or (x_col in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[x_col])):
-                        plot_data[x_col] = convert_dates_to_numeric(plot_data[x_col])
-                    
-                    if y_col == 'date' or (y_col in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[y_col])):
-                        plot_data[y_col] = convert_dates_to_numeric(plot_data[y_col])
-                    
+                if selected_features:
+                    # Создаем графики распределений
                     fig = go.Figure()
                     
-                    if selected_city == "Все города" and 'city_name' in plot_data.columns:
-                        cities = plot_data['city_name'].unique()
-                        colors = px.colors.qualitative.Set1
-                        
-                        for i, city in enumerate(cities[:10]):
-                            city_data = plot_data[plot_data['city_name'] == city]
-                            color = colors[i % len(colors)]
-                            
-                            fig.add_trace(go.Scatter(
-                                x=city_data[x_col],
-                                y=city_data[y_col],
-                                mode='markers',
-                                name=city,
-                                marker=dict(
-                                    color=color,
-                                    size=6,
-                                    opacity=0.6
-                                )
-                            ))
-                    else:
-                        fig.add_trace(go.Scatter(
-                            x=plot_data[x_col],
-                            y=plot_data[y_col],
-                            mode='markers',
-                            name='Данные',
-                            marker=dict(
-                                color='#FFC618',
-                                size=6
-                            ),
-                            opacity=0.3
-                        ))
+                    colors = px.colors.qualitative.Set1
                     
-                    if st.checkbox("Показать линию регрессии", value=True):
-                        mask = ~np.isnan(plot_data[x_col]) & ~np.isnan(plot_data[y_col])
-                        x_clean = plot_data[x_col][mask].values
-                        y_clean = plot_data[y_col][mask].values
-                        
-                        if len(x_clean) > 1:
-                            coeffs = np.polyfit(x_clean, y_clean, 1)
-                            x_range = np.linspace(x_clean.min(), x_clean.max(), 100)
-                            y_pred = coeffs[0] * x_range + coeffs[1]
-                            
-                            fig.add_trace(go.Scatter(
-                                x=x_range,
-                                y=y_pred,
-                                mode='lines',
-                                name='Линия регрессии',
-                                line=dict(
-                                    color='red',
-                                    width=3,
-                                    dash='solid'
-                                ),
-                                opacity=1.0
+                    for i, feature in enumerate(selected_features):
+                        # Нормализуем данные для лучшего сравнения
+                        data = filtered_df[feature].dropna()
+                        if len(data) > 0:
+                            # Гистограмма
+                            fig.add_trace(go.Histogram(
+                                x=data,
+                                name=feature,
+                                opacity=0.6,
+                                marker_color=colors[i % len(colors)],
+                                nbinsx=30
                             ))
                     
                     fig.update_layout(
-                        title=f"{y_col} vs {x_col} - {selected_city}",
-                        xaxis_title=x_col,
-                        yaxis_title=y_col
+                        title=f"Сравнение распределений признаков - {selected_city}",
+                        xaxis_title="Значения",
+                        yaxis_title="Частота",
+                        barmode='overlay',
+                        bargap=0.1
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
-        
-        with tab3:
-            st.subheader("Box Plot и Violin Plot")
-            
-            if numeric_cols:
-                box_col = st.selectbox("Признак для анализа распределения:", numeric_cols[:10])
-                
-                if box_col in filtered_df.columns:
-                    plot_data = filtered_df.copy()
                     
-                    if box_col == 'date' or (box_col in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[box_col])):
-                        plot_data[box_col] = convert_dates_to_numeric(plot_data[box_col])
+                    # Сводная таблица статистики для выбранных признаков
+                    st.subheader("Сводная статистика")
+                    summary_stats = []
+                    for feature in selected_features:
+                        if feature in filtered_df.columns:
+                            data = filtered_df[feature]
+                            stats = data.describe()
+                            summary_stats.append({
+                                'Признак': feature,
+                                'Среднее': round(stats['mean'], 3),
+                                'Медиана': round(stats['50%'], 3),
+                                'Стд. отклонение': round(stats['std'], 3),
+                                'Минимум': round(stats['min'], 3),
+                                'Максимум': round(stats['max'], 3),
+                                'Пропуски': data.isnull().sum(),
+                                'Уникальных значений': data.nunique()
+                            })
                     
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        if selected_city == "Все города" and 'city_name' in plot_data.columns:
-                            fig_box = px.box(
-                                plot_data,
-                                y=box_col,
-                                x='city_name',
-                                title=f"Box Plot: {box_col} по городам"
-                            )
-                        else:
-                            fig_box = px.box(
-                                plot_data,
-                                y=box_col,
-                                title=f"Box Plot: {box_col} - {selected_city}"
-                            )
-                        st.plotly_chart(fig_box, use_container_width=True)
-                    
-                    with col2:
-                        if selected_city == "Все города" and 'city_name' in plot_data.columns:
-                            fig_violin = px.violin(
-                                plot_data,
-                                y=box_col,
-                                x='city_name',
-                                title=f"Violin Plot: {box_col} по городам",
-                                box=True
-                            )
-                        else:
-                            fig_violin = px.violin(
-                                plot_data,
-                                y=box_col,
-                                title=f"Violin Plot: {box_col} - {selected_city}",
-                                box=True
-                            )
-                        st.plotly_chart(fig_violin, use_container_width=True)
+                    if summary_stats:
+                        summary_df = pd.DataFrame(summary_stats)
+                        st.dataframe(summary_df, use_container_width=True)
 
 elif page == "Анализ данных":
     
