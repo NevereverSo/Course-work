@@ -378,18 +378,26 @@ if page == "Визуализация данных":
                         st.metric("Медиана", f"{data.median():.2f}")
                     with col3:
                         st.metric("Стд. отклонение", f"{data.std():.2f}")
+                      
                     with col4:
+                    # ДОБАВИТЬ ТОЧНОСТЬ СРЕДНЕГО (95% доверительный интервал)
+                    n = len(data)
+                    if n > 1:
+                        se = data.std() / np.sqrt(n)  # стандартная ошибка
+                        ci = 1.96 * se  # 95% доверительный интервал
+                        st.metric("Точность среднего (±)", f"±{ci:.3f}")
+                    else:
                         st.metric("Диапазон", f"{data.min():.1f}-{data.max():.1f}")
-                    
-                    # Гистограмма
-                    fig = px.histogram(
-                        filtered_df, 
-                        x=selected_col, 
-                        nbins=30,
-                        title=f"Распределение {selected_col} - {selected_city}",
-                        color='city_name' if selected_city == "Все города" and 'city_name' in filtered_df.columns else None
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                                    
+                                    # Гистограмма
+                                    fig = px.histogram(
+                                        filtered_df, 
+                                        x=selected_col, 
+                                        nbins=30,
+                                        title=f"Распределение {selected_col} - {selected_city}",
+                                        color='city_name' if selected_city == "Все города" and 'city_name' in filtered_df.columns else None
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
         
         with tab2:
             st.subheader("Scatter Plot Analysis")
