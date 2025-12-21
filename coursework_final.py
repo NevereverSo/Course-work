@@ -518,8 +518,6 @@ else:
     selected_city = "Все города"
     numeric_cols = []
 
-# ... (предыдущий код без изменений до страницы "Визуализация данных")
-
 if page == "Визуализация данных":
     
     if filtered_df.empty:
@@ -560,7 +558,7 @@ if page == "Визуализация данных":
                 st.metric("Точность данных", "N/A")
         
         # НОВАЯ СЕКЦИЯ: Методы info() и describe()
-        with st.expander("📊 Методы info() и describe() для анализа данных", expanded=False):
+        with st.expander("методы info() и describe() для анализа данных", expanded=False):
             col1, col2 = st.columns(2)
             
             with col1:
@@ -631,40 +629,7 @@ if page == "Визуализация данных":
                 else:
                     st.warning("Нет числовых колонок для метода describe()")
         
-        # Кнопка для экспорта статистики
-        if st.button("📥 Экспорт статистики в CSV"):
-            if len(numeric_cols) > 0:
-                # Создаем DataFrame со статистикой
-                stats_list = []
-                for col in numeric_cols[:15]:  # Ограничиваем количество колонок
-                    if col in filtered_df.columns:
-                        stats = filtered_df[col].describe()
-                        stats_list.append({
-                            'Признак': col,
-                            'Количество': stats['count'],
-                            'Среднее': round(stats['mean'], 2),
-                            'Стд. отклонение': round(stats['std'], 2),
-                            'Минимум': round(stats['min'], 2),
-                            '25%': round(stats['25%'], 2),
-                            'Медиана': round(stats['50%'], 2),
-                            '75%': round(stats['75%'], 2),
-                            'Максимум': round(stats['max'], 2),
-                            'Пропуски': filtered_df[col].isnull().sum(),
-                            'Точность (%)': round((filtered_df[col].notna().sum() / len(filtered_df)) * 100, 1)
-                        })
-                
-                stats_df = pd.DataFrame(stats_list)
-                
-                # Создаем CSV
-                csv = stats_df.to_csv(index=False, encoding='utf-8-sig')
-                
-                # Кнопка для скачивания
-                st.download_button(
-                    label="Скачать статистику CSV",
-                    data=csv,
-                    file_name=f"weather_stats_{selected_city}.csv",
-                    mime="text/csv",
-                )
+       
         
         if selected_city == "Все города" and 'city_name' in filtered_df.columns and filtered_df['city_name'].nunique() > 1:
             with st.expander("Сводная статистика по городам"):
