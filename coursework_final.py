@@ -271,6 +271,127 @@ def simple_forecast_fallback(ts_data, periods=30):
             'yhat': np.zeros(periods)
         })
 
+def evaluate_time_series_model(ts_data, model_type='arima', test_size=0.3):
+    """
+    Правильная оценка модели временного ряда с использованием walk-forward validation
+    """
+    if ts_data is None or len(ts_data) < 30:
+        return None, None
+    
+    # 1. Разделяем на тренировочную и тестовую части ВО ВРЕМЕННОМ ПОРЯДКЕ
+    split_idx = int(len(ts_data) * (1 - test_size))
+    train_data = ts_data.iloc[:split_idx].copy()
+    test_data = ts_data.iloc[split_idx:].copy()
+    
+    # 2. Делаем прогноз на тестовую часть
+    if model_type == 'arima':
+        _, forecast = arima_forecast(
+            train_data, 
+            periods=len(test_data),
+            order=(1,1,1)
+        )
+    elif model_type == 'exponential':
+        _, forecast = exponential_smoothing_forecast(
+            train_data,
+            periods=len(test_data)
+        )
+    else:
+        return None, None
+    
+    if forecast is None:
+        return None, None
+    
+    # 3. Рассчитываем метрики СРАВНИВАЯ С ИЗВЕСТНЫМИ ЗНАЧЕНИЯМИ
+    y_true = test_data['y'].values
+    y_pred = forecast['yhat'].values[:len(y_true)]  # Обрезаем если нужно
+    
+    # Ограничиваем до одинаковой длины
+    min_len = min(len(y_true), len(y_pred))
+    y_true = y_true[:min_len]
+    y_pred = y_pred[:min_len]
+    
+    # 4. Правильный расчет R² для временных рядов
+    def calculate_r2_time_series(y_true, y_pred):
+        # Способ 1: Наивная модель (последнее известное значение)
+        if len(y_true) > 1:
+            # Наивный прогноз: следующий день = предыдущий день
+            naive_forecast = np.roll(y_true, 1)
+            naive_forecast[0] = y_true[0]
+            
+            # Ошибка наивной модели
+            mse_naive = np.mean((y_true[1:] - naive_forecast[1:]) ** 2)
+            # Ошибка нашей модели
+            mse_model = np.mean((y_true - y_pred) ** 2)
+            
+            # R² относительно наивной модели
+            if mse_naive > 0:
+                r2_vs_naive = 1 - (mse_model / mse_naive)
+            else:
+                r2_vs_naive = np.nan
+        else:
+            r2_vs_naive = np.nan
+        
+        # Способ 2: Традиционный R²
+        ss_res = np.sum((y_true - y_pred) ** 2)
+        ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+        
+        if ss_tot == 0:
+            r2_traditional = np.nan
+        else:
+            r2_traditional = 1 - (ss_res / ss_tot)
+        
+        # Возвращаем лучший из двух
+        if np.isnan(r2_vs_naive) and np.isnan(r2_traditional):
+            return np.nan
+        elif np.isnan(r2_vs_naive):
+            return r2_traditional
+        elif np.isnan(r2_traditional):
+            return r2_vs_naive
+        else:
+            # Используем R² vs naive как основной (более осмысленный для временных рядов)
+            return max(r2_vs_naive, r2_traditional)
+    
+    # 5. Рассчитываем все метрики
+    metrics = {}
+    
+    # R²
+    metrics['R²'] = calculate_r2_time_series(y_true, y_pred)
+    
+    # MAE
+    metrics['MAE'] = np.mean(np.abs(y_true - y_pred))
+    
+    # RMSE
+    metrics['RMSE'] = np.sqrt(np.mean((y_true - y_pred) ** 2))
+    
+    # MAPE
+    mask = y_true != 0
+    if np.sum(mask) > 0:
+        metrics['MAPE (%)'] = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
+    else:
+        metrics['MAPE (%)'] = np.nan
+    
+    # MASE (Mean Absolute Scaled Error) - ЛУЧШАЯ метрика для временных рядов
+    if len(y_true) > 1:
+        # Наивный прогноз
+        naive_forecast = np.roll(y_true, 1)
+        naive_forecast[0] = y_true[0]
+        
+        mae_naive = np.mean(np.abs(y_true[1:] - naive_forecast[1:]))
+        mae_model = metrics['MAE']
+        
+        if mae_naive > 0:
+            metrics['MASE'] = mae_model / mae_naive
+        else:
+            metrics['MASE'] = np.nan
+        
+        # Улучшение относительно наивной модели
+        metrics['Improvement vs Naive (%)'] = ((mae_naive - mae_model) / mae_naive) * 100
+    else:
+        metrics['MASE'] = np.nan
+        metrics['Improvement vs Naive (%)'] = np.nan
+    
+    return metrics, (y_true, y_pred, test_data['ds'].values)
+
 # ----------------------------------------------------------
 # ИСПРАВЛЕННЫЕ МЕТРИКИ ДЛЯ ВРЕМЕННЫХ РЯДОВ
 # ----------------------------------------------------------
@@ -1555,63 +1676,89 @@ else:  # Прогнозирование
                         
                         if models_to_use:
                             forecasts = {}
-                            backtest_results = {}
+                            evaluation_results = {}
                             
-                            # Для каждой модели
                             for model_name in models_to_use:
-                                with st.spinner(f"Обучение {model_name}..."):
-                                    if model_name == "ARIMA":
-                                        model_fit, forecast = arima_forecast(
-                                            ts_data, 
-                                            periods=forecast_days,
-                                            order=(1,1,1)
-                                        )
-                                    elif model_name == "Exponential Smoothing":
-                                        model_fit, forecast = exponential_smoothing_forecast(
-                                            ts_data,
-                                            periods=forecast_days
-                                        )
-                                    else:
-                                        continue
+                                # 1. Сначала оцениваем на исторических данных
+                                with st.spinner(f"Оценка точности {model_name}..."):
+                                    metrics, test_data = evaluate_time_series_model(
+                                        ts_data, 
+                                        model_type='arima' if model_name == 'ARIMA' else 'exponential',
+                                        test_size=0.3  # 30% данных для тестирования
+                                    )
                                     
-                                    # Если модель не сработала, используем простой прогноз
-                                    if forecast is None:
-                                        st.warning(f"{model_name} не сработала, используем простой прогноз")
-                                        forecast = simple_forecast_fallback(ts_data, forecast_days)
+                                    if metrics:
+                                        evaluation_results[model_name] = metrics
+                                        
+                                        # Показываем график прогноза на тестовых данных
+                                        if test_data:
+                                            y_true, y_pred, dates = test_data
+                                            
+                                            fig_test = go.Figure()
+                                            fig_test.add_trace(go.Scatter(
+                                                x=dates,
+                                                y=y_true,
+                                                mode='lines',
+                                                name='Фактические значения',
+                                                line=dict(color='blue', width=2)
+                                            ))
+                                            fig_test.add_trace(go.Scatter(
+                                                x=dates,
+                                                y=y_pred,
+                                                mode='lines',
+                                                name=f'Прогноз {model_name}',
+                                                line=dict(color='red', width=2, dash='dash')
+                                            ))
+                                            
+                                            fig_test.update_layout(
+                                                title=f"Тестирование {model_name} (30% последних данных)",
+                                                xaxis_title="Дата",
+                                                yaxis_title=target_col
+                                            )
+                                            
+                                            with st.expander(f"Оценка {model_name}"):
+                                                st.plotly_chart(fig_test, use_container_width=True)
+                                                
+                                                # Таблица метрик
+                                                metrics_df = pd.DataFrame([metrics]).T
+                                                metrics_df.columns = ['Значение']
+                                                st.dataframe(metrics_df.round(4))
+                                
+                                # 2. Затем делаем прогноз в будущее
+                                with st.spinner(f"Прогноз {model_name} на будущее..."):
+                                    if model_name == "ARIMA":
+                                        _, forecast = arima_forecast(ts_data, periods=forecast_days)
+                                    else:
+                                        _, forecast = exponential_smoothing_forecast(ts_data, periods=forecast_days)
                                     
                                     forecasts[model_name] = forecast
-                                    
-                                    # Бэктестинг (если достаточно данных)
-                                    if len(ts_data) > 30 and not fast_mode:
-                                        try:
-                                            # Разделяем данные
-                                            split_idx = int(len(ts_data) * 0.7)
-                                            train_data = ts_data.iloc[:split_idx]
-                                            test_data = ts_data.iloc[split_idx:]
-                                            
-                                            # Обучаем на тренировочных данных
-                                            if model_name == "ARIMA":
-                                                _, test_forecast = arima_forecast(
-                                                    train_data,
-                                                    periods=len(test_data),
-                                                    order=(1,1,1)
-                                                )
-                                            else:
-                                                _, test_forecast = exponential_smoothing_forecast(
-                                                    train_data,
-                                                    periods=len(test_data)
-                                                )
-                                            
-                                            if test_forecast is not None:
-                                                # Сравниваем с тестовыми данными
-                                                metrics = calculate_time_series_metrics(
-                                                    test_data['y'].values,
-                                                    test_forecast['yhat'].values,
-                                                    target_col
-                                                )
-                                                backtest_results[model_name] = metrics
-                                        except Exception as e:
-                                            st.info(f"Бэктестинг для {model_name} пропущен: {str(e)[:50]}")
+                            
+                            # Показываем результаты оценки
+                            if evaluation_results:
+                                st.subheader("📊 Результаты оценки точности")
+                                
+                                # Создаем DataFrame с метриками
+                                eval_df = pd.DataFrame(evaluation_results).T
+                                
+                                # Форматируем для красоты
+                                for col in eval_df.columns:
+                                    if 'MAPE' in col or 'Improvement' in col:
+                                        eval_df[col] = eval_df[col].apply(lambda x: f"{x:.2f}%" if not pd.isna(x) else "N/A")
+                                    elif col == 'R²':
+                                        eval_df[col] = eval_df[col].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                                    else:
+                                        eval_df[col] = eval_df[col].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                                
+                                st.dataframe(eval_df, use_container_width=True)
+                                
+                                # Интерпретация метрик
+                                st.info("""
+                                **Как интерпретировать метрики:**
+                                - **R² > 0**: Модель лучше среднего
+                                - **MASE < 1**: Модель лучше наивной (y(t) = y(t-1))
+                                - **Improvement > 0%**: Модель лучше наивной на указанный процент
+                                - **MAPE**: Средняя процентная ошибка (чем меньше, тем лучше)
+                                """)
                             
                             # Визуализация прогнозов
                             if forecasts:
