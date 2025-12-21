@@ -90,7 +90,7 @@ def prepare_time_series_data(df, target_col, date_col='date'):
     return ts_data
 
 @st.cache_data(ttl=1800, max_entries=3)
-def arima_forecast(ts_data, periods=90, order=(1,1,1)):
+def arima_forecast(ts_data, periods=10, order=(1,1,1)):
     """
     Быстрое прогнозирование ARIMA
     """
@@ -98,7 +98,7 @@ def arima_forecast(ts_data, periods=90, order=(1,1,1)):
         ts_series = ts_data.set_index('ds')['y']
         
         # СИЛЬНОЕ уменьшение данных для скорости
-        max_points = 90  # Всего 50 точек для скорости
+        max_points = 50  # Всего 50 точек для скорости
         if len(ts_series) > max_points:
             ts_series = ts_series.iloc[-max_points:]
         
@@ -131,7 +131,7 @@ def arima_forecast(ts_data, periods=90, order=(1,1,1)):
         return None, None
 
 @st.cache_data(ttl=1800, max_entries=3)
-def exponential_smoothing_forecast(ts_data, periods=90):
+def exponential_smoothing_forecast(ts_data, periods=10):
     """
     ПРОСТАЯ И РАБОЧАЯ версия Exponential Smoothing
     """
@@ -143,7 +143,7 @@ def exponential_smoothing_forecast(ts_data, periods=90):
             return None, None
         
         # Уменьшаем данные
-        max_points = 90  # 60 точек максимум
+        max_points = 60  # 60 точек максимум
         if len(ts_series) > max_points:
             ts_series = ts_series.iloc[-max_points:]
         
