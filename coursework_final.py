@@ -101,7 +101,6 @@ def arima_forecast(ts_data, periods=30, order=(1,1,1)):
         max_points = 50  # Всего 50 точек для скорости
         if len(ts_series) > max_points:
             ts_series = ts_series.iloc[-max_points:]
-            st.info(f"ARIMA: используем {max_points} последних точек")
         
         # Упрощенная ARIMA с фиксированными параметрами
         model = ARIMA(ts_series, order=order)
