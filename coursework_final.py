@@ -17,6 +17,12 @@ from sklearn.metrics import (silhouette_score, r2_score, mean_absolute_error,
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 
+# ДОБАВЛЕНО: Импорт для accuracy
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+
 # Для прогнозирования временных рядов
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
@@ -128,6 +134,31 @@ def prepare_scaled_data(_df, numeric_cols):
     df_scaled[numeric_cols] = scaler.transform(_df[numeric_cols])
     
     return df_scaled
+
+# ----------------------------------------------------------
+# ДОБАВЛЕНА ФУНКЦИЯ ДЛЯ КЛАССИФИКАЦИИ
+# ----------------------------------------------------------
+@st.cache_data
+def prepare_classification_data(df, target_col, features):
+    """Подготовка данных для классификации"""
+    if df.empty or target_col not in df.columns:
+        return None, None, None, None
+    
+    # Создаем бинарную целевую переменную (например, выше/ниже медианы)
+    median_val = df[target_col].median()
+    y = (df[target_col] > median_val).astype(int)
+    
+    # Отбираем признаки
+    X = df[features].copy()
+    
+    # Заполняем пропуски
+    X = X.fillna(X.mean())
+    
+    # Масштабирование
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    return X_scaled, y, scaler, median_val
 
 # ----------------------------------------------------------
 # ФУНКЦИИ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ
@@ -316,8 +347,8 @@ if page == "Визуализация данных":
         
         numeric_cols = get_numeric_columns(filtered_df)
         
-        # Быстрые KPI
-        col1, col2, col3 = st.columns(3)
+        # Быстрые KPI с accuracy
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             if 'city_name' in filtered_df.columns:
@@ -336,6 +367,14 @@ if page == "Визуализация данных":
         
         with col3:
             st.metric("Признаков", len(numeric_cols))
+            
+        with col4:
+            # Точность данных (процент не пропущенных значений)
+            if len(numeric_cols) > 0:
+                data_accuracy = filtered_df[numeric_cols].notna().mean().mean() * 100
+                st.metric("Точность данных", f"{data_accuracy:.1f}%")
+            else:
+                st.metric("Точность данных", "N/A")
         
         # Сводная статистика если выбраны "Все города"
         if selected_city == "Все города" and 'city_name' in filtered_df.columns and filtered_df['city_name'].nunique() > 1:
@@ -349,6 +388,7 @@ if page == "Визуализация данных":
                         'Ср. темп. (°C)': round(city_data['avg_temp_c'].mean(), 1) if 'avg_temp_c' in city_data.columns else 'N/A',
                         'Ср. осадки (мм)': round(city_data['precipitation_mm'].mean(), 1) if 'precipitation_mm' in city_data.columns else 'N/A',
                         'Ср. давление (гПа)': round(city_data['avg_sea_level_pres_hpa'].mean(), 1) if 'avg_sea_level_pres_hpa' in city_data.columns else 'N/A',
+                        'Точность данных (%)': round(city_data[numeric_cols].notna().mean().mean() * 100, 1) if len(numeric_cols) > 0 else 'N/A',
                         'Период': f"{city_data['date'].min().date()} - {city_data['date'].max().date()}"
                     }
                     city_stats_summary.append(stats)
@@ -380,14 +420,9 @@ if page == "Визуализация данных":
                         st.metric("Стд. отклонение", f"{data.std():.2f}")
                       
                     with col4:
-                        # ДОБАВИТЬ ТОЧНОСТЬ СРЕДНЕГО (95% доверительный интервал)
-                        n = len(data)
-                        if n > 1:
-                            se = data.std() / np.sqrt(n)  # стандартная ошибка
-                            ci = 1.96 * se  # 95% доверительный интервал
-                            st.metric("Точность среднего (±)", f"±{ci:.3f}")
-                        else:
-                            st.metric("Диапазон", f"{data.min():.1f}-{data.max():.1f}")
+                        # Точность данных для этого признака (не пропущенных)
+                        accuracy_pct = data.notna().sum() / len(data) * 100
+                        st.metric("Точность данных", f"{accuracy_pct:.1f}%")
                                         
                     # Гистограмма
                     fig = px.histogram(
@@ -544,7 +579,7 @@ if page == "Визуализация данных":
                         st.plotly_chart(fig_violin, use_container_width=True)
 
 # ==========================================================
-# PAGE 2 — АНАЛИЗ ДАННЫХ
+# PAGE 2 — АНАЛИЗ ДАННЫХ (ИСПРАВЛЕНА ОШИБКА В СТРОКЕ 734)
 # ==========================================================
 elif page == "Анализ данных":
     
@@ -564,13 +599,14 @@ elif page == "Анализ данных":
         else:
             st.write(f"**Доступно признаков:** {len(numeric_cols)}")
             
+            # ДОБАВЛЕН ВЫБОР ТИПА АНАЛИЗА
             analysis_method = st.selectbox(
                 "Метод анализа:",
-                ["Регрессия", "Кластеризация", "PCA"],
+                ["Регрессия", "Классификация", "Кластеризация", "PCA"],
                 index=0
             )
             
-            if analysis_method in ["Регрессия", "Кластеризация", "PCA"]:
+            if analysis_method in ["Регрессия", "Классификация", "Кластеризация", "PCA"]:
                 df_scaled = prepare_scaled_data(filtered_df, numeric_cols)
             
             if analysis_method == "Регрессия":
@@ -693,6 +729,112 @@ elif page == "Анализ данных":
                     )
                     st.plotly_chart(fig, use_container_width=True)
             
+            elif analysis_method == "Классификация":
+                st.header("Классификация")
+                
+                # Выбор целевой переменной для классификации
+                target = st.selectbox(
+                    "Целевая переменная для классификации:",
+                    numeric_cols[:10]
+                )
+                
+                if target:
+                    # Создаем бинарную классификацию
+                    median_val = filtered_df[target].median()
+                    st.write(f"**Медиана {target}:** {median_val:.2f}")
+                    st.write(f"**Классы:** 0 = ниже медианы, 1 = выше медианы")
+                    
+                    # Выбор признаков
+                    if len(numeric_cols) > 1:
+                        correlations = filtered_df[numeric_cols].corr()[target].abs().sort_values(ascending=False)
+                        correlations = correlations[correlations.index != target]
+                        top_features = correlations.head(3).index.tolist()
+                    else:
+                        top_features = []
+                    
+                    features = st.multiselect(
+                        "Признаки для классификации:",
+                        numeric_cols,
+                        default=top_features,
+                        key="class_features"
+                    )
+                
+                if target and features and len(features) > 0:
+                    test_size = st.slider("Размер тестовой выборки:", 0.1, 0.4, 0.3, 0.05, key="class_test_size")
+                    
+                    # Подготовка данных для классификации
+                    X, y, scaler, median_val = prepare_classification_data(filtered_df, target, features)
+                    
+                    if X is not None:
+                        # Разделение данных
+                        X_train, X_test, y_train, y_test = train_test_split(
+                            X, y, test_size=test_size, random_state=42, stratify=y
+                        )
+                        
+                        # Модели классификации
+                        models_config = {
+                            "Логистическая регрессия": LogisticRegression(random_state=42),
+                            "Random Forest": RandomForestClassifier(n_estimators=50, random_state=42),
+                            "Gradient Boosting": GradientBoostingClassifier(n_estimators=50, random_state=42),
+                            "SVM": SVC(kernel='rbf', probability=True, random_state=42)
+                        }
+                        
+                        results = {}
+                        
+                        for name, model in models_config.items():
+                            model.fit(X_train, y_train)
+                            y_pred = model.predict(X_test)
+                            y_pred_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
+                            
+                            # Расчет метрик
+                            results[name] = {
+                                'Accuracy': accuracy_score(y_test, y_pred),
+                                'Precision': classification_report(y_test, y_pred, output_dict=True)['weighted avg']['precision'],
+                                'Recall': classification_report(y_test, y_pred, output_dict=True)['weighted avg']['recall'],
+                                'F1-Score': classification_report(y_test, y_pred, output_dict=True)['weighted avg']['f1-score']
+                            }
+                        
+                        # Сравнительная таблица
+                        st.subheader("Сравнение моделей классификации")
+                        results_df = pd.DataFrame(results).T.round(4)
+                        st.dataframe(results_df, use_container_width=True)
+                        
+                        # Визуализация лучшей модели
+                        best_model_name = max(results.keys(), key=lambda x: results[x]['Accuracy'])
+                        best_model = models_config[best_model_name]
+                        best_model.fit(X_train, y_train)
+                        
+                        st.subheader(f"Лучшая модель: {best_model_name}")
+                        st.metric("Accuracy", f"{results[best_model_name]['Accuracy']:.4f}")
+                        
+                        # Матрица ошибок
+                        from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+                        import matplotlib.pyplot as plt
+                        
+                        fig, ax = plt.subplots(figsize=(8, 6))
+                        cm = confusion_matrix(y_test, best_model.predict(X_test))
+                        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Ниже медианы', 'Выше медианы'])
+                        disp.plot(cmap='Blues', ax=ax)
+                        ax.set_title(f"Матрица ошибок - {best_model_name}")
+                        st.pyplot(fig)
+                        
+                        # Важность признаков для tree-based моделей
+                        if hasattr(best_model, 'feature_importances_'):
+                            st.subheader("Важность признаков")
+                            importances = pd.DataFrame({
+                                'Признак': features,
+                                'Важность': best_model.feature_importances_
+                            }).sort_values('Важность', ascending=False)
+                            
+                            fig = px.bar(
+                                importances,
+                                x='Важность',
+                                y='Признак',
+                                orientation='h',
+                                title='Важность признаков для классификации'
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+            
             elif analysis_method == "Кластеризация":
                 st.header("Кластеризация")
                 
@@ -727,25 +869,49 @@ elif page == "Анализ данных":
                         model = KMeans(n_clusters=n_clusters, n_init=3, random_state=42)
                         clusters = model.fit_predict(X_sample)
                         st.metric("Inertia", f"{model.inertia_:.2f}")
+                        
+                        # Silhouette score для оценки качества кластеризации
+                        if n_clusters > 1:
+                            silhouette_avg = silhouette_score(X_sample, clusters)
+                            st.metric("Silhouette Score", f"{silhouette_avg:.3f}")
                     else:
                         model = DBSCAN(eps=eps, min_samples=5)
                         clusters = model.fit_predict(X_sample)
                     
-                    df_viz = filtered_df.loc[X_sample.index].copy()
-                    df_viz['Cluster'] = clusters
+                    # ИСПРАВЛЕНИЕ ОШИБКИ: Используем правильный способ получения df_viz
+                    if len(X_sample) > 0:
+                        # Создаем DataFrame для визуализации
+                        df_viz = pd.DataFrame(X_sample, columns=features)
+                        df_viz['Cluster'] = clusters
+                        
+                        # Добавляем исходные данные если нужно
+                        # Используем индекс из X_sample для безопасного доступа к filtered_df
+                        try:
+                            # Проверяем, что индексы существуют в filtered_df
+                            valid_indices = X_sample.index[X_sample.index.isin(filtered_df.index)]
+                            if len(valid_indices) > 0:
+                                # Добавляем дополнительные данные если они есть
+                                for col in ['city_name', 'date']:
+                                    if col in filtered_df.columns:
+                                        df_viz[col] = filtered_df.loc[valid_indices, col].values
+                        except:
+                            pass
+                    else:
+                        df_viz = pd.DataFrame()
                     
-                    # Конвертируем даты если нужно для первого признака
-                    if features[0] in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[features[0]]):
-                        df_viz[features[0]] = convert_dates_to_numeric(df_viz[features[0]])
-                    
-                    fig = px.scatter(
-                        df_viz,
-                        x=features[0],
-                        y=features[1],
-                        color='Cluster',
-                        title=f"Кластеризация: {features[0]} vs {features[1]} - {selected_city}"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    if not df_viz.empty:
+                        # Конвертируем даты если нужно для первого признака
+                        if features[0] in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[features[0]]):
+                            df_viz[features[0]] = convert_dates_to_numeric(df_viz[features[0]])
+                        
+                        fig = px.scatter(
+                            df_viz,
+                            x=features[0],
+                            y=features[1],
+                            color='Cluster',
+                            title=f"Кластеризация: {features[0]} vs {features[1]} - {selected_city}"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
             
             else:  # PCA
                 st.header("Анализ главных компонент (PCA)")
@@ -784,10 +950,23 @@ elif page == "Анализ данных":
                     )
                     st.plotly_chart(fig, use_container_width=True)
                     
+                    # ДОБАВЛЕНО: Общая объясненная дисперсия
+                    total_explained_var = sum(explained_var) * 100
+                    st.metric("Объясненная дисперсия", f"{total_explained_var:.1f}%")
+                    
                     if n_components >= 2:
-                        df_viz = filtered_df.loc[X_sample.index].copy()
-                        df_viz['PC1'] = X_pca[:, 0]
-                        df_viz['PC2'] = X_pca[:, 1]
+                        # Создаем DataFrame для визуализации
+                        df_viz = pd.DataFrame(X_pca[:, :2], columns=['PC1', 'PC2'])
+                        
+                        # Добавляем исходные данные если нужно
+                        try:
+                            valid_indices = X_sample.index[X_sample.index.isin(filtered_df.index)]
+                            if len(valid_indices) > 0:
+                                for col in ['city_name', 'date']:
+                                    if col in filtered_df.columns:
+                                        df_viz[col] = filtered_df.loc[valid_indices, col].values
+                        except:
+                            pass
                         
                         fig_scatter = px.scatter(
                             df_viz,
@@ -822,7 +1001,7 @@ else:  # Прогнозирование
                 st.error("Нет числовых признаков для прогнозирования.")
             else:
                 # Конфигурация прогнозирования
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 
                 with col1:
                     target_col = st.selectbox(
@@ -832,6 +1011,13 @@ else:  # Прогнозирование
                 
                 with col2:
                     forecast_days = st.slider("Дней для прогноза:", 7, 90, 30)
+                
+                with col3:
+                    # ДОБАВЛЕНА ТОЧНОСТЬ ПРОГНОЗА (MAPE)
+                    if target_col:
+                        # Показываем точность данных
+                        data_accuracy = filtered_df[target_col].notna().sum() / len(filtered_df) * 100
+                        st.metric("Точность данных", f"{data_accuracy:.1f}%")
                 
                 # Предупреждение если выбраны "Все города"
                 if selected_city == "Все города":
@@ -844,7 +1030,7 @@ else:  # Прогнозирование
                     if ts_data is not None:
                         # Информация о временном ряде
                         st.subheader("Информация о временном ряде")
-                        col1, col2, col3 = st.columns(3)
+                        col1, col2, col3, col4 = st.columns(4)
                         with col1:
                             st.metric("Дней данных", len(ts_data))
                         with col2:
@@ -863,6 +1049,10 @@ else:  # Прогнозирование
                             else:
                                 end_date_str = str(end_date)
                             st.metric("Конец", end_date_str)
+                        with col4:
+                            # Точность временного ряда (процент не пропущенных)
+                            ts_accuracy = ts_data['y'].notna().sum() / len(ts_data) * 100
+                            st.metric("Точность ряда", f"{ts_accuracy:.1f}%")
                         
                         # Визуализация исходных данных
                         fig_original = px.line(
@@ -887,6 +1077,7 @@ else:  # Прогнозирование
                         if models_to_use:
                             forecasts = {}
                             models_info = {}
+                            backtest_results = {}
                             
                             # Прогнозирование выбранными методами
                             for model_name in models_to_use:
@@ -908,10 +1099,46 @@ else:  # Прогнозирование
                                     if forecast is not None:
                                         forecasts[model_name] = forecast
                                         models_info[model_name] = model_fit
+                                        
+                                        # Бэктестинг для оценки точности
+                                        if len(ts_data) > 30:
+                                            train_data = ts_data.iloc[:-30]
+                                            test_data = ts_data.iloc[-30:]
+                                            
+                                            if model_name == "ARIMA":
+                                                backtest_model_fit, backtest_forecast = arima_forecast(
+                                                    train_data,
+                                                    periods=30,
+                                                    order=(1,1,1)
+                                                )
+                                            else:
+                                                backtest_model_fit, backtest_forecast = exponential_smoothing_forecast(
+                                                    train_data,
+                                                    periods=30
+                                                )
+                                            
+                                            if backtest_forecast is not None:
+                                                mape = mean_absolute_percentage_error(
+                                                    test_data['y'], 
+                                                    backtest_forecast['yhat']
+                                                ) * 100
+                                                backtest_results[model_name] = {
+                                                    'MAPE (%)': mape,
+                                                    'RMSE': np.sqrt(mean_squared_error(
+                                                        test_data['y'], 
+                                                        backtest_forecast['yhat']
+                                                    ))
+                                                }
                             
                             # Визуализация прогнозов
                             if forecasts:
                                 st.subheader("Сравнение прогнозов")
+                                
+                                # ДОБАВЛЕНА ТАБЛИЦА С ТОЧНОСТЬЮ
+                                if backtest_results:
+                                    st.subheader("Точность прогнозирования (бэктестинг)")
+                                    backtest_df = pd.DataFrame(backtest_results).T.round(3)
+                                    st.dataframe(backtest_df, use_container_width=True)
                                 
                                 fig_forecast = go.Figure()
                                 
@@ -997,8 +1224,9 @@ else:  # Прогнозирование
                                             forecast_df['yhat'].mean(),
                                             forecast_df['yhat'].std(),
                                             forecast_df['yhat'].min(),
-                                            forecast_df['yhat'].max()
+                                            forecast_df['yhat'].max(),
+                                            forecast_df['yhat'].std() / forecast_df['yhat'].mean() * 100  # CV%
                                         ]
                                     
-                                    stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум']
+                                    stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум', 'Коэф. вариации (%)']
                                     st.dataframe(stats_df.round(2), use_container_width=True)
