@@ -176,6 +176,121 @@ def prepare_classification_data(df, target_col, features):
     return X_scaled, y, scaler, median_val
 
 # ----------------------------------------------------------
+# ФУНКЦИЯ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ (ИСПРАВЛЕННАЯ)
+# ----------------------------------------------------------
+@st.cache_data(ttl=1800, max_entries=3)
+def exponential_smoothing_forecast(ts_data, periods=30):
+    """
+    Прогнозирование экспоненциальным сглаживанием с улучшенной обработкой ошибок
+    """
+    try:
+        ts_series = ts_data.set_index('ds')['y']
+        
+        if len(ts_series) < 2:
+            return None, None
+        
+        # Проверяем на стационарность и наличие достаточных данных
+        if len(ts_series) < 10:
+            # Для очень коротких рядов используем простую модель
+            model = ExponentialSmoothing(
+                ts_series,
+                seasonal=None,
+                trend=None
+            )
+        else:
+            # Для более длинных рядов с сезонностью
+            seasonal_periods = min(7, len(ts_series) // 2)
+            
+            # Проверяем, есть ли сезонность
+            if seasonal_periods >= 2:
+                try:
+                    model = ExponentialSmoothing(
+                        ts_series,
+                        seasonal_periods=seasonal_periods,
+                        trend='add',
+                        seasonal='add',
+                        initialization_method='estimated'
+                    )
+                except:
+                    # Если не получается с сезонностью, пробуем без нее
+                    model = ExponentialSmoothing(
+                        ts_series,
+                        seasonal=None,
+                        trend='add',
+                        initialization_method='estimated'
+                    )
+            else:
+                model = ExponentialSmoothing(
+                    ts_series,
+                    seasonal=None,
+                    trend='add',
+                    initialization_method='estimated'
+                )
+        
+        # Подгоняем модель с обработкой ошибок
+        try:
+            model_fit = model.fit()
+        except Exception as e:
+            # Если не получается сложная модель, используем простую
+            model = ExponentialSmoothing(
+                ts_series,
+                seasonal=None,
+                trend=None,
+                initialization_method='estimated'
+            )
+            model_fit = model.fit()
+        
+        # Прогнозируем
+        forecast = model_fit.forecast(steps=periods)
+        
+        # Проверяем прогноз на разумность
+        if np.any(np.isnan(forecast)) or np.any(np.isinf(forecast)):
+            # Если прогноз содержит NaN или Inf, возвращаем последнее значение
+            last_value = ts_series.iloc[-1]
+            forecast = np.full(periods, last_value)
+        
+        last_date = ts_series.index[-1]
+        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
+        
+        forecast_df = pd.DataFrame({
+            'ds': forecast_dates,
+            'yhat': forecast.values
+        })
+        
+        return model_fit, forecast_df
+        
+    except Exception as e:
+        st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
+        return None, None
+
+
+# ----------------------------------------------------------
+# ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ ДАТ В ЧИСЛОВОЙ ФОРМАТ
+# ----------------------------------------------------------
+def convert_dates_to_numeric(dates):
+    """Конвертирует даты в числовой формат (количество дней с первой даты)"""
+    if len(dates) == 0:
+        return dates
+    
+    # Если это уже числовой формат, возвращаем как есть
+    if np.issubdtype(dates.dtype, np.number):
+        return dates
+    
+    # Конвертируем datetime в числовой формат
+    if pd.api.types.is_datetime64_any_dtype(dates):
+        # Используем разницу в днях от первой даты
+        min_date = dates.min()
+        numeric_dates = (dates - min_date).dt.days
+        return numeric_dates
+    elif hasattr(dates.iloc[0], 'date'):
+        # Для объектов datetime.date
+        min_date = min(dates)
+        numeric_dates = [(date - min_date).days for date in dates]
+        return pd.Series(numeric_dates)
+    
+    return dates
+
+# ----------------------------------------------------------
 # НОВЫЕ ФУНКЦИИ ДЛЯ ОЦЕНКИ ТОЧНОСТИ ПРОГНОЗИРОВАНИЯ
 # ----------------------------------------------------------
 def safe_mape(y_true, y_pred):
@@ -332,120 +447,7 @@ def calculate_forecast_metrics(y_true, y_pred, variable_name=""):
     
     return metrics
 
-# ----------------------------------------------------------
-# ФУНКЦИЯ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ (ИСПРАВЛЕННАЯ)
-# ----------------------------------------------------------
-@st.cache_data(ttl=1800, max_entries=3)
-def exponential_smoothing_forecast(ts_data, periods=30):
-    """
-    Прогнозирование экспоненциальным сглаживанием с улучшенной обработкой ошибок
-    """
-    try:
-        ts_series = ts_data.set_index('ds')['y']
-        
-        if len(ts_series) < 2:
-            return None, None
-        
-        # Проверяем на стационарность и наличие достаточных данных
-        if len(ts_series) < 10:
-            # Для очень коротких рядов используем простую модель
-            model = ExponentialSmoothing(
-                ts_series,
-                seasonal=None,
-                trend=None
-            )
-        else:
-            # Для более длинных рядов с сезонностью
-            seasonal_periods = min(7, len(ts_series) // 2)
-            
-            # Проверяем, есть ли сезонность
-            if seasonal_periods >= 2:
-                try:
-                    model = ExponentialSmoothing(
-                        ts_series,
-                        seasonal_periods=seasonal_periods,
-                        trend='add',
-                        seasonal='add',
-                        initialization_method='estimated'
-                    )
-                except:
-                    # Если не получается с сезонностью, пробуем без нее
-                    model = ExponentialSmoothing(
-                        ts_series,
-                        seasonal=None,
-                        trend='add',
-                        initialization_method='estimated'
-                    )
-            else:
-                model = ExponentialSmoothing(
-                    ts_series,
-                    seasonal=None,
-                    trend='add',
-                    initialization_method='estimated'
-                )
-        
-        # Подгоняем модель с обработкой ошибок
-        try:
-            model_fit = model.fit()
-        except Exception as e:
-            # Если не получается сложная модель, используем простую
-            model = ExponentialSmoothing(
-                ts_series,
-                seasonal=None,
-                trend=None,
-                initialization_method='estimated'
-            )
-            model_fit = model.fit()
-        
-        # Прогнозируем
-        forecast = model_fit.forecast(steps=periods)
-        
-        # Проверяем прогноз на разумность
-        if np.any(np.isnan(forecast)) or np.any(np.isinf(forecast)):
-            # Если прогноз содержит NaN или Inf, возвращаем последнее значение
-            last_value = ts_series.iloc[-1]
-            forecast = np.full(periods, last_value)
-        
-        last_date = ts_series.index[-1]
-        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
-        
-        forecast_df = pd.DataFrame({
-            'ds': forecast_dates,
-            'yhat': forecast.values
-        })
-        
-        return model_fit, forecast_df
-        
-    except Exception as e:
-        st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
-        return None, None
 
-
-# ----------------------------------------------------------
-# ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ ДАТ В ЧИСЛОВОЙ ФОРМАТ
-# ----------------------------------------------------------
-def convert_dates_to_numeric(dates):
-    """Конвертирует даты в числовой формат (количество дней с первой даты)"""
-    if len(dates) == 0:
-        return dates
-    
-    # Если это уже числовой формат, возвращаем как есть
-    if np.issubdtype(dates.dtype, np.number):
-        return dates
-    
-    # Конвертируем datetime в числовой формат
-    if pd.api.types.is_datetime64_any_dtype(dates):
-        # Используем разницу в днях от первой даты
-        min_date = dates.min()
-        numeric_dates = (dates - min_date).dt.days
-        return numeric_dates
-    elif hasattr(dates.iloc[0], 'date'):
-        # Для объектов datetime.date
-        min_date = min(dates)
-        numeric_dates = [(date - min_date).days for date in dates]
-        return pd.Series(numeric_dates)
-    
-    return dates
 
 # ----------------------------------------------------------
 # SIDEBAR
