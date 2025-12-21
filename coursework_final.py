@@ -389,15 +389,15 @@ if page == "Визуализация данных":
                         else:
                             st.metric("Диапазон", f"{data.min():.1f}-{data.max():.1f}")
                                         
-                                        # Гистограмма
-                                        fig = px.histogram(
-                                            filtered_df, 
-                                            x=selected_col, 
-                                            nbins=30,
-                                            title=f"Распределение {selected_col} - {selected_city}",
-                                            color='city_name' if selected_city == "Все города" and 'city_name' in filtered_df.columns else None
-                                        )
-                                        st.plotly_chart(fig, use_container_width=True)
+                        # Гистограмма
+                        fig = px.histogram(
+                            filtered_df, 
+                            x=selected_col, 
+                            nbins=30,
+                            title=f"Распределение {selected_col} - {selected_city}",
+                            color='city_name' if selected_city == "Все города" and 'city_name' in filtered_df.columns else None
+                            )
+                        st.plotly_chart(fig, use_container_width=True)                       
         
         with tab2:
             st.subheader("Scatter Plot Analysis")
