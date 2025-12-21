@@ -746,7 +746,7 @@ elif page == "Анализ данных":
                     )
                 
                 if target and features:
-                    test_size = st.slider("Тестовая выборка:", 0.1, 0.4, 0.2, 0.05)
+                    test_size = st.slider("Тестовая выборка:", 0.1, 0.8, 0.2, 0.05)
                     
                     # Конвертируем даты если нужно
                     if target in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[target]):
