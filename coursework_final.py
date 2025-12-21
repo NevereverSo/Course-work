@@ -11,7 +11,6 @@ warnings.filterwarnings('ignore')
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import (silhouette_score, r2_score, mean_absolute_error, 
                            mean_absolute_percentage_error, mean_squared_error)
 from sklearn.decomposition import PCA
@@ -19,7 +18,6 @@ from sklearn.model_selection import train_test_split
 
 # ДОБАВЛЕНО: Импорт для accuracy
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 
@@ -774,9 +772,7 @@ elif page == "Анализ данных":
                     models_config = {
                         "Линейная регрессия": LinearRegression(),
                         "Гребневая регрессия": Ridge(alpha=1.0),
-                        "Лассо регрессия": Lasso(alpha=0.01),
-                        "Random Forest": RandomForestRegressor(n_estimators=50, random_state=42),
-                        "Gradient Boosting": GradientBoostingRegressor(n_estimators=50, random_state=42)
+                        "Лассо регрессия": Lasso(alpha=0.01)
                     }
                     
                     results = {}
