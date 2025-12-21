@@ -176,100 +176,6 @@ def prepare_classification_data(df, target_col, features):
     return X_scaled, y, scaler, median_val
 
 # ----------------------------------------------------------
-# ФУНКЦИИ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ
-# ----------------------------------------------------------
-@st.cache_data(ttl=1800, max_entries=5)
-def prepare_time_series_data(df, target_col, date_col='date'):
-    """
-    Подготовка данных временного ряда с оптимизацией
-    """
-    if df.empty or target_col not in df.columns or date_col not in df.columns:
-        return None
-    
-    # Сортируем по дате и убираем дубликаты
-    ts_df = df.sort_values(date_col).drop_duplicates(subset=[date_col])
-    
-    if len(ts_df) < 10:  # Минимум данных
-        return None
-    
-    # Создаем временной ряд
-    ts_data = ts_df[[date_col, target_col]].copy()
-    ts_data.columns = ['ds', 'y']
-    
-    # Интерполяция пропусков
-    ts_data['y'] = ts_data['y'].interpolate(method='linear')
-    
-    # Для переменных, которые могут быть нулевыми, добавляем небольшое значение
-    # чтобы избежать деления на ноль при расчете MAPE
-    zero_threshold_vars = ['precipitation', 'snow', 'depth', 'rain', 'snow_depth']
-    if any(var in target_col.lower() for var in zero_threshold_vars):
-        ts_data['y'] = ts_data['y'] + 0.1  # Добавляем 0.1 чтобы избежать нулей
-    
-    return ts_data
-
-@st.cache_data(ttl=1800, max_entries=3)
-def arima_forecast(ts_data, periods=30, order=(1,1,1)):
-    """
-    Прогнозирование ARIMA
-    """
-    try:
-        # Используем последние 100 точек для скорости
-        if len(ts_data) > 100:
-            ts_series = ts_data.set_index('ds')['y'].iloc[-100:]
-        else:
-            ts_series = ts_data.set_index('ds')['y']
-        
-        model = ARIMA(ts_series, order=order)
-        model_fit = model.fit()
-        
-        forecast = model_fit.forecast(steps=periods)
-        last_date = ts_series.index[-1]
-        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
-        
-        forecast_df = pd.DataFrame({
-            'ds': forecast_dates,
-            'yhat': forecast.values
-        })
-        
-        return model_fit, forecast_df
-    except Exception as e:
-        st.error(f"Ошибка ARIMA: {str(e)[:100]}")
-        return None, None
-
-@st.cache_data(ttl=1800, max_entries=3)
-def exponential_smoothing_forecast(ts_data, periods=30):
-    """
-    Прогнозирование экспоненциальным сглаживанием
-    """
-    try:
-        ts_series = ts_data.set_index('ds')['y']
-        
-        if len(ts_series) > 200:
-            ts_series = ts_series.iloc[-200:]
-        
-        model = ExponentialSmoothing(
-            ts_series,
-            seasonal_periods=min(7, len(ts_series)),
-            trend='add',
-            seasonal='add'
-        )
-        model_fit = model.fit()
-        
-        forecast = model_fit.forecast(steps=periods)
-        last_date = ts_series.index[-1]
-        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
-        
-        forecast_df = pd.DataFrame({
-            'ds': forecast_dates,
-            'yhat': forecast.values
-        })
-        
-        return model_fit, forecast_df
-    except Exception as e:
-        st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
-        return None, None
-
-# ----------------------------------------------------------
 # НОВЫЕ ФУНКЦИИ ДЛЯ ОЦЕНКИ ТОЧНОСТИ ПРОГНОЗИРОВАНИЯ
 # ----------------------------------------------------------
 def safe_mape(y_true, y_pred):
@@ -329,35 +235,191 @@ def safe_smape(y_true, y_pred):
     
     return np.mean(smape_values)
 
+def safe_r2_score(y_true, y_pred):
+    """
+    Безопасный расчет R² с обработкой крайних случаев
+    """
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    
+    mask = (~np.isnan(y_true)) & (~np.isnan(y_pred))
+    y_true = y_true[mask]
+    y_pred = y_pred[mask]
+    
+    if len(y_true) < 2:
+        return np.nan
+    
+    # Проверяем, что данные не все одинаковые
+    if np.all(y_true == y_true[0]):
+        return np.nan
+    
+    # Рассчитываем R²
+    ss_res = np.sum((y_true - y_pred) ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    
+    # Избегаем деления на ноль
+    if ss_tot == 0:
+        return np.nan
+    
+    r2 = 1 - (ss_res / ss_tot)
+    
+    # Ограничиваем R² в разумных пределах
+    return max(min(r2, 1.0), -1.0)
+
 def calculate_forecast_metrics(y_true, y_pred, variable_name=""):
     """
     Расчет всех метрик точности прогнозирования с учетом особенностей переменной
     """
     metrics = {}
     
-    # Базовые метрики
-    metrics['RMSE'] = np.sqrt(mean_squared_error(y_true, y_pred))
-    metrics['MAE'] = mean_absolute_error(y_true, y_pred)
+    # Проверка данных
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
     
-    # R² score
-    metrics['R²'] = r2_score(y_true, y_pred)
+    # Фильтруем NaN
+    mask = (~np.isnan(y_true)) & (~np.isnan(y_pred))
+    y_true_clean = y_true[mask]
+    y_pred_clean = y_pred[mask]
+    
+    if len(y_true_clean) < 2:
+        return {
+            'RMSE': np.nan,
+            'MAE': np.nan,
+            'R²': np.nan,
+            'MAPE (%)': np.nan,
+            'sMAPE (%)': np.nan
+        }
+    
+    # Базовые метрики с защитой от ошибок
+    try:
+        metrics['RMSE'] = np.sqrt(mean_squared_error(y_true_clean, y_pred_clean))
+    except:
+        metrics['RMSE'] = np.nan
+    
+    try:
+        metrics['MAE'] = mean_absolute_error(y_true_clean, y_pred_clean)
+    except:
+        metrics['MAE'] = np.nan
+    
+    # R² score с защитой
+    try:
+        metrics['R²'] = safe_r2_score(y_true_clean, y_pred_clean)
+    except:
+        metrics['R²'] = np.nan
     
     # Для переменных с возможными нулевыми значениями используем sMAPE
     zero_sensitive_vars = ['precipitation', 'snow', 'depth', 'rain', 'snow_depth', 'solar']
     
     if any(var in variable_name.lower() for var in zero_sensitive_vars):
-        metrics['sMAPE (%)'] = safe_smape(y_true, y_pred)
-        metrics['MAPE (%)'] = "N/A (используйте sMAPE)"
+        try:
+            metrics['sMAPE (%)'] = safe_smape(y_true_clean, y_pred_clean)
+            metrics['MAPE (%)'] = "N/A (используйте sMAPE)"
+        except:
+            metrics['sMAPE (%)'] = np.nan
+            metrics['MAPE (%)'] = "N/A"
     else:
         # Для остальных переменных можно использовать MAPE
-        mape_val = safe_mape(y_true, y_pred)
-        if not np.isnan(mape_val):
-            metrics['MAPE (%)'] = mape_val
-        else:
-            metrics['MAPE (%)'] = "N/A (нулевые значения)"
-            metrics['sMAPE (%)'] = safe_smape(y_true, y_pred)
+        try:
+            mape_val = safe_mape(y_true_clean, y_pred_clean)
+            if not np.isnan(mape_val):
+                metrics['MAPE (%)'] = mape_val
+            else:
+                metrics['MAPE (%)'] = "N/A (нулевые значения)"
+                metrics['sMAPE (%)'] = safe_smape(y_true_clean, y_pred_clean)
+        except:
+            metrics['MAPE (%)'] = np.nan
+            metrics['sMAPE (%)'] = np.nan
     
     return metrics
+
+# ----------------------------------------------------------
+# ФУНКЦИЯ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ (ИСПРАВЛЕННАЯ)
+# ----------------------------------------------------------
+@st.cache_data(ttl=1800, max_entries=3)
+def exponential_smoothing_forecast(ts_data, periods=30):
+    """
+    Прогнозирование экспоненциальным сглаживанием с улучшенной обработкой ошибок
+    """
+    try:
+        ts_series = ts_data.set_index('ds')['y']
+        
+        if len(ts_series) < 2:
+            return None, None
+        
+        # Проверяем на стационарность и наличие достаточных данных
+        if len(ts_series) < 10:
+            # Для очень коротких рядов используем простую модель
+            model = ExponentialSmoothing(
+                ts_series,
+                seasonal=None,
+                trend=None
+            )
+        else:
+            # Для более длинных рядов с сезонностью
+            seasonal_periods = min(7, len(ts_series) // 2)
+            
+            # Проверяем, есть ли сезонность
+            if seasonal_periods >= 2:
+                try:
+                    model = ExponentialSmoothing(
+                        ts_series,
+                        seasonal_periods=seasonal_periods,
+                        trend='add',
+                        seasonal='add',
+                        initialization_method='estimated'
+                    )
+                except:
+                    # Если не получается с сезонностью, пробуем без нее
+                    model = ExponentialSmoothing(
+                        ts_series,
+                        seasonal=None,
+                        trend='add',
+                        initialization_method='estimated'
+                    )
+            else:
+                model = ExponentialSmoothing(
+                    ts_series,
+                    seasonal=None,
+                    trend='add',
+                    initialization_method='estimated'
+                )
+        
+        # Подгоняем модель с обработкой ошибок
+        try:
+            model_fit = model.fit()
+        except Exception as e:
+            # Если не получается сложная модель, используем простую
+            model = ExponentialSmoothing(
+                ts_series,
+                seasonal=None,
+                trend=None,
+                initialization_method='estimated'
+            )
+            model_fit = model.fit()
+        
+        # Прогнозируем
+        forecast = model_fit.forecast(steps=periods)
+        
+        # Проверяем прогноз на разумность
+        if np.any(np.isnan(forecast)) or np.any(np.isinf(forecast)):
+            # Если прогноз содержит NaN или Inf, возвращаем последнее значение
+            last_value = ts_series.iloc[-1]
+            forecast = np.full(periods, last_value)
+        
+        last_date = ts_series.index[-1]
+        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
+        
+        forecast_df = pd.DataFrame({
+            'ds': forecast_dates,
+            'yhat': forecast.values
+        })
+        
+        return model_fit, forecast_df
+        
+    except Exception as e:
+        st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
+        return None, None
+
 
 # ----------------------------------------------------------
 # ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ ДАТ В ЧИСЛОВОЙ ФОРМАТ
@@ -1138,17 +1200,6 @@ else:  # Прогнозирование
                 if selected_city == "Все города":
                     st.warning("Для прогнозирования выбран режим 'Все города'. Анализ будет проводиться по сводным данным всех городов.")
                 
-                # Информация о переменной
-                if target_col:
-                    st.info(f"""
-                    **Информация о переменной {target_col}:**
-                    - Среднее: {filtered_df[target_col].mean():.2f}
-                    - Медиана: {filtered_df[target_col].median():.2f}
-                    - Минимум: {filtered_df[target_col].min():.2f}
-                    - Максимум: {filtered_df[target_col].max():.2f}
-                    - Дней с нулевыми значениями: {(filtered_df[target_col] == 0).sum()} ({(filtered_df[target_col] == 0).sum() / len(filtered_df) * 100:.1f}%)
-                    """)
-                
                 # Подготовка данных
                 if target_col:
                     ts_data = prepare_time_series_data(filtered_df, target_col)
@@ -1264,14 +1315,20 @@ else:  # Прогнозирование
                                     # Создаем таблицу с метриками
                                     backtest_df = pd.DataFrame(backtest_results).T
                                     
-                                    # Форматируем числовые значения
-                                    numeric_cols_backtest = ['RMSE', 'MAE', 'R²', 'MAPE (%)', 'sMAPE (%)']
-                                    for col in numeric_cols_backtest:
-                                        if col in backtest_df.columns:
-                                            if col == 'R²':
-                                                backtest_df[col] = backtest_df[col].apply(lambda x: f"{x:.4f}" if isinstance(x, (int, float)) else x)
+                                    # Форматируем числовые значения с проверкой на NaN
+                                    def format_metric(value):
+                                        if isinstance(value, (int, float)):
+                                            if np.isnan(value):
+                                                return "N/A"
+                                            elif value > 1e10 or value < -1e10:
+                                                return "Ошибка"
                                             else:
-                                                backtest_df[col] = backtest_df[col].apply(lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x)
+                                                return f"{value:.4f}"
+                                        else:
+                                            return str(value)
+                                    
+                                    for col in backtest_df.columns:
+                                        backtest_df[col] = backtest_df[col].apply(format_metric)
                                     
                                     st.dataframe(backtest_df, use_container_width=True)
                                     
@@ -1282,11 +1339,14 @@ else:  # Прогнозирование
                                         
                                         - **RMSE (Root Mean Square Error):** Среднеквадратичная ошибка. Чем меньше, тем лучше.
                                         - **MAE (Mean Absolute Error):** Средняя абсолютная ошибка. Чем меньше, тем лучше.
-                                        - **R² (Coefficient of Determination):** Доля объясненной дисперсии. От 0 до 1, чем ближе к 1, тем лучше.
+                                        - **R² (Coefficient of Determination):** Доля объясненной дисперсии. От -∞ до 1:
+                                          * 1 = идеально
+                                          * 0 = как среднее
+                                          * < 0 = хуже чем среднее
                                         - **MAPE (%):** Средняя абсолютная процентная ошибка. Хорошо для ненулевых значений.
                                         - **sMAPE (%):** Симметричная MAPE. Более устойчива к нулевым значениям.
                                         
-                                        **Примечание:** Для переменных с нулевыми значениями (осадки, снег и т.д.) рекомендуется использовать **sMAPE**.
+                                        **Примечание:** R² может быть отрицательным если модель работает хуже чем простое среднее.
                                         """)
                                 
                                 fig_forecast = go.Figure()
@@ -1369,13 +1429,25 @@ else:  # Прогнозирование
                                         if model_name not in ["ARIMA", "Exponential Smoothing"]:
                                             continue
                                             
-                                        stats_df[model_name] = [
-                                            forecast_df['yhat'].mean(),
-                                            forecast_df['yhat'].std(),
-                                            forecast_df['yhat'].min(),
-                                            forecast_df['yhat'].max(),
-                                            forecast_df['yhat'].std() / max(abs(forecast_df['yhat'].mean()), 0.001) * 100  # CV% с защитой от деления на ноль
-                                        ]
+                                        # Проверяем прогноз на разумность
+                                        yhat_values = forecast_df['yhat'].values
+                                        if len(yhat_values) > 0:
+                                            # Фильтруем NaN и Inf
+                                            mask = ~np.isnan(yhat_values) & ~np.isinf(yhat_values)
+                                            yhat_clean = yhat_values[mask]
+                                            
+                                            if len(yhat_clean) > 0:
+                                                stats_df[model_name] = [
+                                                    np.mean(yhat_clean),
+                                                    np.std(yhat_clean),
+                                                    np.min(yhat_clean),
+                                                    np.max(yhat_clean),
+                                                    (np.std(yhat_clean) / max(abs(np.mean(yhat_clean)), 0.001)) * 100
+                                                ]
+                                            else:
+                                                stats_df[model_name] = ["N/A", "N/A", "N/A", "N/A", "N/A"]
+                                        else:
+                                            stats_df[model_name] = ["N/A", "N/A", "N/A", "N/A", "N/A"]
                                     
                                     stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум', 'Коэф. вариации (%)']
                                     st.dataframe(stats_df.round(2), use_container_width=True)
