@@ -43,19 +43,39 @@ def load_data():
         if not daily_df.empty and 'date' in daily_df.columns:
             daily_df['date'] = pd.to_datetime(daily_df['date'], errors='coerce')
     except Exception as e:
+        st.warning(f"Ошибка загрузки daily_weather_smallest.csv: {str(e)}")
         daily_df = pd.DataFrame()
     
     try:
         cities_df = pd.read_csv("cities.csv", low_memory=False)
-    except:
+    except Exception as e:
+        st.warning(f"Ошибка загрузки cities.csv: {str(e)}")
         cities_df = pd.DataFrame()
     
     try:
         countries_df = pd.read_csv("countries.csv", low_memory=False)
-    except:
+    except Exception as e:
+        st.warning(f"Ошибка загрузки countries.csv: {str(e)}")
         countries_df = pd.DataFrame()
     
-    return countries_df, cities_df, daily_df
+    return daily_df, cities_df, countries_df
+
+# ----------------------------------------------------------
+# ИНИЦИАЛИЗАЦИЯ ПЕРЕМЕННЫХ ПЕРЕД ОСНОВНЫМ КОДОМ
+# ----------------------------------------------------------
+# Инициализируем пустые DataFrame
+daily_df = pd.DataFrame()
+cities_df = pd.DataFrame()
+countries_df = pd.DataFrame()
+
+# Загрузка данных с обработкой ошибок
+try:
+    daily_df, cities_df, countries_df = load_data()
+except Exception as e:
+    st.error(f"Ошибка при загрузке данных: {str(e)}")
+    daily_df = pd.DataFrame()
+    cities_df = pd.DataFrame()
+    countries_df = pd.DataFrame()
 
 # ----------------------------------------------------------
 # ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ ПО ГОРОДАМ
@@ -381,7 +401,8 @@ page = st.sidebar.radio(
 # Выбор города в сайдбаре (доступен на всех страницах)
 st.sidebar.subheader("Выбор города")
 
-if not daily_df.empty and 'city_name' in daily_df.columns:
+# ПРОВЕРКА: убедимся, что daily_df существует и не пустой
+if 'daily_df' in locals() and not daily_df.empty and 'city_name' in daily_df.columns:
     available_cities = get_available_cities(daily_df)
     
     if available_cities:
@@ -420,7 +441,7 @@ if not daily_df.empty and 'city_name' in daily_df.columns:
         numeric_cols = get_numeric_columns(filtered_df)
 else:
     st.sidebar.error("Данные не загружены или нет колонки с городами")
-    filtered_df = daily_df
+    filtered_df = daily_df if 'daily_df' in locals() else pd.DataFrame()
     selected_city = "Все города"
     numeric_cols = []
 
@@ -430,7 +451,7 @@ else:
 if page == "Визуализация данных":
     
     if filtered_df.empty:
-        st.error("Данные не загружены.")
+        st.error("Данные не загружены. Проверьте наличие файла daily_weather_smallest.csv")
     else:
         # Показываем информацию о выбранном городе
         if selected_city == "Все города":
@@ -672,7 +693,7 @@ if page == "Визуализация данных":
                         st.plotly_chart(fig_violin, use_container_width=True)
 
 # ==========================================================
-# PAGE 2 — АНАЛИЗ ДАННЫХ (ИСПРАВЛЕНА ОШИБКА В СТРОКЕ 734)
+# PAGE 2 — АНАЛИЗ ДАННЫХ
 # ==========================================================
 elif page == "Анализ данных":
     
