@@ -90,19 +90,23 @@ def prepare_time_series_data(df, target_col, date_col='date'):
     return ts_data
 
 @st.cache_data(ttl=1800, max_entries=3)
-def arima_forecast(ts_data, periods=30, order=(1,1,1)):
+def fast_arima_forecast(ts_data, periods=30, order=(1,1,1)):
     """
-    Прогнозирование ARIMA
+    Быстрое прогнозирование ARIMA с оптимизацией
     """
     try:
-        # Используем последние 100 точек для скорости
-        if len(ts_data) > 100:
-            ts_series = ts_data.set_index('ds')['y'].iloc[-100:]
-        else:
-            ts_series = ts_data.set_index('ds')['y']
+        ts_series = ts_data.set_index('ds')['y']
         
+        # СИЛЬНОЕ УМЕНЬШЕНИЕ размера выборки для скорости
+        max_points = 50  # Вместо 100!
+        if len(ts_series) > max_points:
+            ts_series = ts_series.iloc[-max_points:]
+        
+        # Используем метод быстрого обучения
         model = ARIMA(ts_series, order=order)
-        model_fit = model.fit()
+        
+        # Уменьшаем количество итераций для скорости
+        model_fit = model.fit(method_kwargs={'maxiter': 50})  # Вместо 500 по умолчанию
         
         forecast = model_fit.forecast(steps=periods)
         last_date = ts_series.index[-1]
@@ -115,13 +119,14 @@ def arima_forecast(ts_data, periods=30, order=(1,1,1)):
         
         return model_fit, forecast_df
     except Exception as e:
-        st.error(f"Ошибка ARIMA: {str(e)[:100]}")
-        return None, None
+        # Возвращаем простой прогноз (последнее значение)
+        st.warning(f"ARIMA не сработала, используем простой прогноз")
+        return simple_forecast(ts_data, periods)
 
 @st.cache_data(ttl=1800, max_entries=3)
-def exponential_smoothing_forecast(ts_data, periods=30):
+def fast_exponential_smoothing_forecast(ts_data, periods=30):
     """
-    Прогнозирование экспоненциальным сглаживанием с улучшенной обработкой ошибок
+    Быстрое экспоненциальное сглаживание
     """
     try:
         ts_series = ts_data.set_index('ds')['y']
@@ -129,65 +134,41 @@ def exponential_smoothing_forecast(ts_data, periods=30):
         if len(ts_series) < 2:
             return None, None
         
-        # Проверяем на стационарность и наличие достаточных данных
-        if len(ts_series) < 10:
-            # Для очень коротких рядов используем простую модель
-            model = ExponentialSmoothing(
-                ts_series,
-                seasonal=None,
-                trend=None
-            )
-        else:
-            # Для более длинных рядов с сезонностью
-            seasonal_periods = min(7, len(ts_series) // 2)
-            
-            # Проверяем, есть ли сезонность
-            if seasonal_periods >= 2:
-                try:
-                    model = ExponentialSmoothing(
-                        ts_series,
-                        seasonal_periods=seasonal_periods,
-                        trend='add',
-                        seasonal='add',
-                        initialization_method='estimated'
-                    )
-                except:
-                    # Если не получается с сезонностью, пробуем без нее
-                    model = ExponentialSmoothing(
-                        ts_series,
-                        seasonal=None,
-                        trend='add',
-                        initialization_method='estimated'
-                    )
-            else:
-                model = ExponentialSmoothing(
-                    ts_series,
-                    seasonal=None,
-                    trend='add',
-                    initialization_method='estimated'
-                )
+        # СИЛЬНОЕ УМЕНЬШЕНИЕ размера данных
+        max_points = 100  # Вместо 200!
+        if len(ts_series) > max_points:
+            ts_series = ts_series.iloc[-max_points:]
         
-        # Подгоняем модель с обработкой ошибок
-        try:
+        # ПРОСТАЯ модель без сложной оптимизации
+        if len(ts_series) < 20:
+            # Очень короткий ряд - простая модель
+            model = SimpleExpSmoothing(ts_series)
             model_fit = model.fit()
-        except Exception as e:
-            # Если не получается сложная модель, используем простую
+        elif len(ts_series) < 50:
+            # Средний ряд - модель с трендом
             model = ExponentialSmoothing(
                 ts_series,
                 seasonal=None,
-                trend=None,
+                trend='add',
                 initialization_method='estimated'
             )
-            model_fit = model.fit()
+            model_fit = model.fit(optimized=False)  # НЕ оптимизируем параметры!
+        else:
+            # Длинный ряд - модель с сезонностью
+            model = ExponentialSmoothing(
+                ts_series,
+                seasonal_periods=7,  # Фиксированная недельная сезонность
+                trend='add',
+                seasonal='add',
+                initialization_method='estimated'
+            )
+            model_fit = model.fit(optimized=False, remove_bias=False)  # Быстрая фит
         
-        # Прогнозируем
         forecast = model_fit.forecast(steps=periods)
         
-        # Проверяем прогноз на разумность
-        if np.any(np.isnan(forecast)) or np.any(np.isinf(forecast)):
-            # Если прогноз содержит NaN или Inf, возвращаем последнее значение
-            last_value = ts_series.iloc[-1]
-            forecast = np.full(periods, last_value)
+        # Проверка прогноза
+        if np.any(np.isnan(forecast)):
+            return simple_forecast(ts_data, periods)
         
         last_date = ts_series.index[-1]
         forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
@@ -200,8 +181,50 @@ def exponential_smoothing_forecast(ts_data, periods=30):
         return model_fit, forecast_df
         
     except Exception as e:
-        st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
-        return None, None
+        st.warning(f"Exponential Smoothing не сработала, используем простой прогноз")
+        return simple_forecast(ts_data, periods)
+
+def simple_forecast(ts_data, periods=30):
+    """
+    Простой и быстрый прогноз для случаев, когда сложные модели не работают
+    """
+    try:
+        ts_series = ts_data.set_index('ds')['y']
+        last_value = ts_series.iloc[-1]
+        
+        # Простой прогноз: последнее значение + тренд из последних 5 точек
+        if len(ts_series) >= 5:
+            last_5 = ts_series.iloc[-5:].values
+            if len(last_5) >= 2:
+                x = np.arange(len(last_5))
+                coeffs = np.polyfit(x, last_5, 1)
+                trend = coeffs[0]  # Ежедневный тренд
+                forecast_values = last_value + trend * np.arange(1, periods + 1)
+            else:
+                forecast_values = np.full(periods, last_value)
+        else:
+            forecast_values = np.full(periods, last_value)
+        
+        last_date = ts_series.index[-1]
+        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
+        
+        forecast_df = pd.DataFrame({
+            'ds': forecast_dates,
+            'yhat': forecast_values
+        })
+        
+        return None, forecast_df
+    except:
+        # Самый простой вариант
+        last_date = ts_data['ds'].iloc[-1]
+        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
+        
+        forecast_df = pd.DataFrame({
+            'ds': forecast_dates,
+            'yhat': np.full(periods, 0)
+        })
+        
+        return None, forecast_df
 
 # ----------------------------------------------------------
 # НОВЫЕ ФУНКЦИИ ДЛЯ ОЦЕНКИ ТОЧНОСТИ ПРОГНОЗИРОВАНИЯ
