@@ -58,7 +58,7 @@ def load_data():
     return daily_df, cities_df, countries_df
 
 # ----------------------------------------------------------
-# ФУНКЦИИ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ (ПЕРЕМЕЩЕНЫ ВНАЧАЛО)
+# ФУНКЦИИ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ (ИСПРАВЛЕННЫЕ)
 # ----------------------------------------------------------
 @st.cache_data(ttl=1800, max_entries=5)
 def prepare_time_series_data(df, target_col, date_col='date'):
@@ -81,28 +81,41 @@ def prepare_time_series_data(df, target_col, date_col='date'):
     # Интерполяция пропусков
     ts_data['y'] = ts_data['y'].interpolate(method='linear')
     
-    # Для переменных, которые могут быть нулевыми, добавляем небольшое значение
-    # чтобы избежать деления на ноль при расчете MAPE
+    # Для переменных с нулевыми значениями добавляем шум чтобы избежать деления на 0
     zero_threshold_vars = ['precipitation', 'snow', 'depth', 'rain', 'snow_depth']
     if any(var in target_col.lower() for var in zero_threshold_vars):
-        ts_data['y'] = ts_data['y'] + 0.1  # Добавляем 0.1 чтобы избежать нулей
+        # Добавляем маленький шум вместо фиксированного значения
+        ts_data['y'] = ts_data['y'] + np.random.uniform(0.01, 0.1, len(ts_data))
     
     return ts_data
 
 @st.cache_data(ttl=1800, max_entries=3)
 def arima_forecast(ts_data, periods=30, order=(1,1,1)):
     """
-    Прогнозирование ARIMA
+    Быстрое прогнозирование ARIMA
     """
     try:
-        # Используем последние 100 точек для скорости
-        if len(ts_data) > 100:
-            ts_series = ts_data.set_index('ds')['y'].iloc[-100:]
-        else:
-            ts_series = ts_data.set_index('ds')['y']
+        ts_series = ts_data.set_index('ds')['y']
         
+        # СИЛЬНОЕ уменьшение данных для скорости
+        max_points = 50  # Всего 50 точек для скорости
+        if len(ts_series) > max_points:
+            ts_series = ts_series.iloc[-max_points:]
+            st.info(f"ARIMA: используем {max_points} последних точек")
+        
+        # Упрощенная ARIMA с фиксированными параметрами
         model = ARIMA(ts_series, order=order)
-        model_fit = model.fit()
+        
+        # Быстрая подгонка с ограниченными итерациями
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                model_fit = model.fit(method_kwargs={'maxiter': 30})
+            except:
+                # Если не получается, пробуем более простую модель
+                st.info("ARIMA (1,1,1) не работает, пробуем (1,0,0)")
+                model = ARIMA(ts_series, order=(1,0,0))
+                model_fit = model.fit(method_kwargs={'maxiter': 20})
         
         forecast = model_fit.forecast(steps=periods)
         last_date = ts_series.index[-1]
@@ -115,63 +128,80 @@ def arima_forecast(ts_data, periods=30, order=(1,1,1)):
         
         return model_fit, forecast_df
     except Exception as e:
-        st.error(f"Ошибка ARIMA: {str(e)[:100]}")
+        st.error(f"ARIMA не сработала: {str(e)[:100]}")
         return None, None
 
 @st.cache_data(ttl=1800, max_entries=3)
 def exponential_smoothing_forecast(ts_data, periods=30):
     """
-    Прогнозирование экспоненциальным сглаживанием с улучшенной обработкой ошибок
+    ПРОСТАЯ И РАБОЧАЯ версия Exponential Smoothing
     """
     try:
         ts_series = ts_data.set_index('ds')['y']
         
-        if len(ts_series) < 2:
+        if len(ts_series) < 5:
+            st.warning("Слишком мало данных для Exponential Smoothing")
             return None, None
         
-        # Проверяем на стационарность и наличие достаточных данных
-        if len(ts_series) < 10:
-            # Для очень коротких рядов используем простую модель
-            model = ExponentialSmoothing(
-                ts_series,
-                seasonal=None,
-                trend=None
-            )
+        # Уменьшаем данные
+        max_points = 60  # 60 точек максимум
+        if len(ts_series) > max_points:
+            ts_series = ts_series.iloc[-max_points:]
+        
+        # ПРОСТЕЙШАЯ РАБОЧАЯ МОДЕЛЬ
+        # 1. Определяем сезонность по длине данных
+        if len(ts_series) >= 14:  # Хотя бы 2 недели
+            seasonal_periods = 7  # Недельная сезонность
         else:
-            # Для более длинных рядов с сезонностью
-            seasonal_periods = min(7, len(ts_series) // 2)
-            
-            # Проверяем, есть ли сезонность
-            if seasonal_periods >= 2:
-                try:
-                    model = ExponentialSmoothing(
-                        ts_series,
-                        seasonal_periods=seasonal_periods,
-                        trend='add',
-                        seasonal='add',
-                        initialization_method='estimated'
-                    )
-                except:
-                    # Если не получается с сезонностью, пробуем без нее
-                    model = ExponentialSmoothing(
-                        ts_series,
-                        seasonal=None,
-                        trend='add',
-                        initialization_method='estimated'
-                    )
+            seasonal_periods = None
+        
+        # 2. Пробуем простую модель
+        try:
+            if seasonal_periods and len(ts_series) >= 2 * seasonal_periods:
+                # Модель с сезонностью
+                model = ExponentialSmoothing(
+                    ts_series,
+                    seasonal_periods=seasonal_periods,
+                    trend='add',
+                    seasonal='add',
+                    initialization_method='estimated'
+                )
             else:
+                # Модель без сезонности
                 model = ExponentialSmoothing(
                     ts_series,
                     seasonal=None,
                     trend='add',
                     initialization_method='estimated'
                 )
-        
-        # Подгоняем модель с обработкой ошибок
-        try:
-            model_fit = model.fit()
+            
+            # Подгоняем модель с упрощенными параметрами
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                
+                # Пробуем подогнать с начальными параметрами
+                try:
+                    model_fit = model.fit(optimized=True)
+                except:
+                    # Если оптимизация не работает, используем ручные параметры
+                    model_fit = model.fit(
+                        smoothing_level=0.3,
+                        smoothing_trend=0.1,
+                        smoothing_seasonal=0.1 if seasonal_periods else None,
+                        optimized=False
+                    )
+            
+            # Прогноз
+            forecast = model_fit.forecast(steps=periods)
+            
+            # Проверяем прогноз
+            if np.any(np.isnan(forecast)):
+                st.warning("Прогноз содержит NaN, используем простой прогноз")
+                raise ValueError("NaN in forecast")
+            
         except Exception as e:
-            # Если не получается сложная модель, используем простую
+            # РЕЗЕРВНЫЙ ВАРИАНТ: простейшая модель
+            st.info("Используем простую модель ETS")
             model = ExponentialSmoothing(
                 ts_series,
                 seasonal=None,
@@ -179,16 +209,9 @@ def exponential_smoothing_forecast(ts_data, periods=30):
                 initialization_method='estimated'
             )
             model_fit = model.fit()
+            forecast = model_fit.forecast(steps=periods)
         
-        # Прогнозируем
-        forecast = model_fit.forecast(steps=periods)
-        
-        # Проверяем прогноз на разумность
-        if np.any(np.isnan(forecast)) or np.any(np.isinf(forecast)):
-            # Если прогноз содержит NaN или Inf, возвращаем последнее значение
-            last_value = ts_series.iloc[-1]
-            forecast = np.full(periods, last_value)
-        
+        # Создаем DataFrame
         last_date = ts_series.index[-1]
         forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
         
@@ -200,9 +223,136 @@ def exponential_smoothing_forecast(ts_data, periods=30):
         return model_fit, forecast_df
         
     except Exception as e:
-        st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
+        st.error(f"Exponential Smoothing не сработала: {str(e)[:100]}")
         return None, None
 
+def simple_forecast_fallback(ts_data, periods=30):
+    """
+    Простой прогноз для случаев, когда сложные модели не работают
+    """
+    try:
+        ts_series = ts_data.set_index('ds')['y']
+        
+        if len(ts_series) < 2:
+            # Нет данных
+            forecast_values = np.zeros(periods)
+        else:
+            # Наивный прогноз: последнее значение + тренд
+            last_value = ts_series.iloc[-1]
+            
+            # Рассчитываем простой тренд
+            if len(ts_series) >= 5:
+                recent = ts_series.iloc[-5:].values
+                if len(recent) >= 2:
+                    # Линейный тренд
+                    x = np.arange(len(recent))
+                    coeffs = np.polyfit(x, recent, 1)
+                    trend = coeffs[0]  # Ежедневное изменение
+                    
+                    # Прогноз с трендом
+                    forecast_values = last_value + trend * np.arange(1, periods + 1)
+                else:
+                    forecast_values = np.full(periods, last_value)
+            else:
+                forecast_values = np.full(periods, last_value)
+        
+        # Создаем DataFrame
+        last_date = ts_data['ds'].iloc[-1]
+        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
+        
+        return pd.DataFrame({
+            'ds': forecast_dates,
+            'yhat': forecast_values
+        })
+    except:
+        # Аварийный вариант
+        return pd.DataFrame({
+            'ds': pd.date_range(start='2023-01-01', periods=periods, freq='D'),
+            'yhat': np.zeros(periods)
+        })
+# ----------------------------------------------------------
+# ИСПРАВЛЕННЫЕ МЕТРИКИ ДЛЯ ВРЕМЕННЫХ РЯДОВ
+# ----------------------------------------------------------
+def calculate_time_series_metrics(y_true, y_pred, variable_name=""):
+    """
+    Правильный расчет метрик для временных рядов
+    """
+    metrics = {}
+    
+    # Преобразуем в массивы
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    
+    # Фильтруем NaN
+    mask = (~np.isnan(y_true)) & (~np.isnan(y_pred))
+    y_true_clean = y_true[mask]
+    y_pred_clean = y_pred[mask]
+    
+    if len(y_true_clean) < 2:
+        return {
+            'RMSE': np.nan,
+            'MAE': np.nan,
+            'R²': np.nan,
+            'MAPE (%)': np.nan,
+            'sMAPE (%)': np.nan
+        }
+    
+    # 1. Базовые метрики
+    try:
+        metrics['RMSE'] = float(np.sqrt(mean_squared_error(y_true_clean, y_pred_clean)))
+        metrics['MAE'] = float(mean_absolute_error(y_true_clean, y_pred_clean))
+    except:
+        metrics['RMSE'] = np.nan
+        metrics['MAE'] = np.nan
+    
+    # 2. R² ДЛЯ ВРЕМЕННЫХ РЯДОВ (правильный расчет)
+    try:
+        # Для временных рядов сравниваем с наивным прогнозом (последнее значение)
+        naive_forecast = np.roll(y_true_clean, 1)
+        naive_forecast[0] = y_true_clean[0]  # Первое значение такое же
+        
+        # SS_res для нашей модели
+        ss_res = np.sum((y_true_clean - y_pred_clean) ** 2)
+        # SS_res для наивной модели
+        ss_res_naive = np.sum((y_true_clean - naive_forecast) ** 2)
+        
+        if ss_res_naive == 0:
+            metrics['R²'] = np.nan
+        else:
+            # R² относительно наивной модели
+            r2 = 1 - (ss_res / ss_res_naive)
+            # Ограничиваем в разумных пределах
+            metrics['R²'] = float(max(min(r2, 1.0), -1.0))
+    except:
+        metrics['R²'] = np.nan
+    
+    # 3. Процентные ошибки
+    zero_sensitive_vars = ['precipitation', 'snow', 'depth', 'rain', 'snow_depth', 'solar']
+    
+    if any(var in variable_name.lower() for var in zero_sensitive_vars):
+        # Для переменных с нулями используем sMAPE
+        try:
+            smape = safe_smape(y_true_clean, y_pred_clean)
+            metrics['sMAPE (%)'] = float(smape) if not np.isnan(smape) else np.nan
+            metrics['MAPE (%)'] = "N/A"
+        except:
+            metrics['sMAPE (%)'] = np.nan
+            metrics['MAPE (%)'] = "N/A"
+    else:
+        # Для остальных - MAPE
+        try:
+            mape = safe_mape(y_true_clean, y_pred_clean)
+            if not np.isnan(mape):
+                metrics['MAPE (%)'] = float(mape)
+                metrics['sMAPE (%)'] = np.nan
+            else:
+                metrics['MAPE (%)'] = "N/A"
+                metrics['sMAPE (%)'] = float(safe_smape(y_true_clean, y_pred_clean))
+        except:
+            metrics['MAPE (%)'] = np.nan
+            metrics['sMAPE (%)'] = np.nan
+    
+    return metrics
 # ----------------------------------------------------------
 # НОВЫЕ ФУНКЦИИ ДЛЯ ОЦЕНКИ ТОЧНОСТИ ПРОГНОЗИРОВАНИЯ
 # ----------------------------------------------------------
@@ -1211,7 +1361,7 @@ elif page == "Анализ данных":
                         st.plotly_chart(fig_scatter, use_container_width=True)
 
 # ==========================================================
-# PAGE 3 — ПРОГНОЗИРОВАНИЕ (С ИСПРАВЛЕННЫМИ МЕТРИКАМИ ТОЧНОСТИ)
+# PAGE 3 — ПРОГНОЗИРОВАНИЕ (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 # ==========================================================
 else:  # Прогнозирование
     
@@ -1246,48 +1396,47 @@ else:  # Прогнозирование
                     forecast_days = st.slider("Дней для прогноза:", 7, 90, 30)
                 
                 with col3:
-                    # ДОБАВЛЕНА ТОЧНОСТЬ ПРОГНОЗА (MAPE)
                     if target_col:
-                        # Показываем точность данных
                         data_accuracy = filtered_df[target_col].notna().sum() / len(filtered_df) * 100
                         st.metric("Точность данных", f"{data_accuracy:.1f}%")
                 
-                # Предупреждение если выбраны "Все города"
+                # Предупреждение
                 if selected_city == "Все города":
-                    st.warning("Для прогнозирования выбран режим 'Все города'. Анализ будет проводиться по сводным данным всех городов.")
+                    st.warning("Режим 'Все города' - данные агрегированы")
+                
+                # Информация о данных
+                if target_col and target_col in filtered_df.columns:
+                    with st.expander("📊 Статистика выбранной переменной"):
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Среднее", f"{filtered_df[target_col].mean():.2f}")
+                        with col2:
+                            st.metric("Медиана", f"{filtered_df[target_col].median():.2f}")
+                        with col3:
+                            st.metric("Std", f"{filtered_df[target_col].std():.2f}")
                 
                 # Подготовка данных
                 if target_col:
-                    ts_data = prepare_time_series_data(filtered_df, target_col)
+                    with st.spinner("Подготовка временного ряда..."):
+                        ts_data = prepare_time_series_data(filtered_df, target_col)
                     
                     if ts_data is not None:
-                        # Информация о временном ряде
+                        # Информация о ряде
                         st.subheader("Информация о временном ряде")
                         col1, col2, col3, col4 = st.columns(4)
                         with col1:
                             st.metric("Дней данных", len(ts_data))
                         with col2:
-                            # Конвертируем дату в строку перед отображением
                             start_date = ts_data['ds'].min()
-                            if hasattr(start_date, 'date'):
-                                start_date_str = str(start_date.date())
-                            else:
-                                start_date_str = str(start_date)
-                            st.metric("Начало", start_date_str)
+                            st.metric("Начало", str(start_date.date()))
                         with col3:
-                            # Конвертируем дату в строку перед отображением
                             end_date = ts_data['ds'].max()
-                            if hasattr(end_date, 'date'):
-                                end_date_str = str(end_date.date())
-                            else:
-                                end_date_str = str(end_date)
-                            st.metric("Конец", end_date_str)
+                            st.metric("Конец", str(end_date.date()))
                         with col4:
-                            # Точность временного ряда (процент не пропущенных)
                             ts_accuracy = ts_data['y'].notna().sum() / len(ts_data) * 100
                             st.metric("Точность ряда", f"{ts_accuracy:.1f}%")
                         
-                        # Визуализация исходных данных
+                        # Визуализация
                         fig_original = px.line(
                             ts_data,
                             x='ds',
@@ -1295,11 +1444,13 @@ else:  # Прогнозирование
                             title=f"Исходный временной ряд: {target_col} - {selected_city}",
                             line_shape='linear'
                         )
-                        
                         st.plotly_chart(fig_original, use_container_width=True)
                         
-                        # Выбор метода прогнозирования
+                        # Выбор моделей
                         st.subheader("Методы прогнозирования")
+                        
+                        # Кнопка для быстрого/полного режима
+                        fast_mode = st.checkbox("🚀 Быстрый режим (ограниченные данные)", value=True)
                         
                         models_to_use = st.multiselect(
                             "Выберите модели для сравнения:",
@@ -1309,10 +1460,9 @@ else:  # Прогнозирование
                         
                         if models_to_use:
                             forecasts = {}
-                            models_info = {}
                             backtest_results = {}
                             
-                            # Прогнозирование выбранными методами
+                            # Для каждой модели
                             for model_name in models_to_use:
                                 with st.spinner(f"Обучение {model_name}..."):
                                     if model_name == "ARIMA":
@@ -1328,83 +1478,51 @@ else:  # Прогнозирование
                                         )
                                     else:
                                         continue
-                                        
-                                    if forecast is not None:
-                                        forecasts[model_name] = forecast
-                                        models_info[model_name] = model_fit
-                                        
-                                        # Бэктестинг для оценки точности
-                                        if len(ts_data) > 30:
-                                            train_data = ts_data.iloc[:-30]
-                                            test_data = ts_data.iloc[-30:]
+                                    
+                                    # Если модель не сработала, используем простой прогноз
+                                    if forecast is None:
+                                        st.warning(f"{model_name} не сработала, используем простой прогноз")
+                                        forecast = simple_forecast_fallback(ts_data, forecast_days)
+                                    
+                                    forecasts[model_name] = forecast
+                                    
+                                    # Бэктестинг (если достаточно данных)
+                                    if len(ts_data) > 30 and not fast_mode:
+                                        try:
+                                            # Разделяем данные
+                                            split_idx = int(len(ts_data) * 0.7)
+                                            train_data = ts_data.iloc[:split_idx]
+                                            test_data = ts_data.iloc[split_idx:]
                                             
+                                            # Обучаем на тренировочных данных
                                             if model_name == "ARIMA":
-                                                backtest_model_fit, backtest_forecast = arima_forecast(
+                                                _, test_forecast = arima_forecast(
                                                     train_data,
-                                                    periods=30,
+                                                    periods=len(test_data),
                                                     order=(1,1,1)
                                                 )
                                             else:
-                                                backtest_model_fit, backtest_forecast = exponential_smoothing_forecast(
+                                                _, test_forecast = exponential_smoothing_forecast(
                                                     train_data,
-                                                    periods=30
+                                                    periods=len(test_data)
                                                 )
                                             
-                                            if backtest_forecast is not None:
-                                                # Используем безопасные метрики
-                                                metrics = calculate_forecast_metrics(
+                                            if test_forecast is not None:
+                                                # Сравниваем с тестовыми данными
+                                                metrics = calculate_time_series_metrics(
                                                     test_data['y'].values,
-                                                    backtest_forecast['yhat'].values,
+                                                    test_forecast['yhat'].values,
                                                     target_col
                                                 )
-                                                
                                                 backtest_results[model_name] = metrics
+                                        except Exception as e:
+                                            st.info(f"Бэктестинг для {model_name} пропущен: {str(e)[:50]}")
                             
                             # Визуализация прогнозов
                             if forecasts:
                                 st.subheader("Сравнение прогнозов")
                                 
-                                # ДОБАВЛЕНА ТАБЛИЦА С ТОЧНОСТЬЮ (с правильными метриками)
-                                if backtest_results:
-                                    st.subheader("Точность прогнозирования (бэктестинг на последних 30 днях)")
-                                    
-                                    # Создаем таблицу с метриками
-                                    backtest_df = pd.DataFrame(backtest_results).T
-                                    
-                                    # Форматируем числовые значения с проверкой на NaN
-                                    def format_metric(value):
-                                        if isinstance(value, (int, float)):
-                                            if np.isnan(value):
-                                                return "N/A"
-                                            elif value > 1e10 or value < -1e10:
-                                                return "Ошибка"
-                                            else:
-                                                return f"{value:.4f}"
-                                        else:
-                                            return str(value)
-                                    
-                                    for col in backtest_df.columns:
-                                        backtest_df[col] = backtest_df[col].apply(format_metric)
-                                    
-                                    st.dataframe(backtest_df, use_container_width=True)
-                                    
-                                    # Объяснение метрик
-                                    with st.expander("Объяснение метрик точности"):
-                                        st.markdown("""
-                                        **Метрики точности прогнозирования:**
-                                        
-                                        - **RMSE (Root Mean Square Error):** Среднеквадратичная ошибка. Чем меньше, тем лучше.
-                                        - **MAE (Mean Absolute Error):** Средняя абсолютная ошибка. Чем меньше, тем лучше.
-                                        - **R² (Coefficient of Determination):** Доля объясненной дисперсии. От -∞ до 1:
-                                          * 1 = идеально
-                                          * 0 = как среднее
-                                          * < 0 = хуже чем среднее
-                                        - **MAPE (%):** Средняя абсолютная процентная ошибка. Хорошо для ненулевых значений.
-                                        - **sMAPE (%):** Симметричная MAPE. Более устойчива к нулевым значениям.
-                                        
-                                        **Примечание:** R² может быть отрицательным если модель работает хуже чем простое среднее.
-                                        """)
-                                
+                                # График
                                 fig_forecast = go.Figure()
                                 
                                 # Исходные данные
@@ -1412,98 +1530,112 @@ else:  # Прогнозирование
                                     x=ts_data['ds'],
                                     y=ts_data['y'],
                                     mode='lines',
-                                    name='Исходные данные',
-                                    line=dict(color='#1f77b4', width=2.5)
+                                    name='Исторические данные',
+                                    line=dict(color='#1f77b4', width=2)
                                 ))
                                 
-                                # Прогнозы
-                                line_colors = [
-                                    '#ff7f0e',  # Оранжевый (для ARIMA)
-                                    '#2ca02c',  # Зеленый (для Exponential Smoothing)
-                                ]
-                                line_styles = ['solid', 'dash']
+                                # Цвета для прогнозов
+                                colors = ['#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+                                styles = ['solid', 'dash', 'dot', 'dashdot']
                                 
                                 for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
-                                    color = line_colors[idx % len(line_colors)]
-                                    style = line_styles[idx % len(line_styles)]
+                                    color = colors[idx % len(colors)]
+                                    style = styles[idx % len(styles)]
                                     
-                                    if model_name in ["ARIMA", "Exponential Smoothing"]:
-                                        fig_forecast.add_trace(go.Scatter(
-                                            x=forecast_df['ds'],
-                                            y=forecast_df['yhat'],
-                                            mode='lines',
-                                            name=f'Прогноз {model_name}',
-                                            line=dict(
-                                                color=color,
-                                                width=3,
-                                                dash=style
-                                            )
-                                        ))
+                                    fig_forecast.add_trace(go.Scatter(
+                                        x=forecast_df['ds'],
+                                        y=forecast_df['yhat'],
+                                        mode='lines',
+                                        name=f'Прогноз {model_name}',
+                                        line=dict(color=color, width=2.5, dash=style)
+                                    ))
                                 
                                 fig_forecast.update_layout(
                                     title=f"Прогноз {target_col} на {forecast_days} дней - {selected_city}",
                                     xaxis_title="Дата",
                                     yaxis_title=target_col,
-                                    plot_bgcolor='white',
-                                    paper_bgcolor='white'
+                                    hovermode='x unified'
                                 )
                                 
                                 st.plotly_chart(fig_forecast, use_container_width=True)
                                 
-                                # Таблица с последними прогнозами
-                                st.subheader("Последние значения прогнозов")
+                                # Метрики точности (если есть бэктестинг)
+                                if backtest_results:
+                                    st.subheader("Точность прогнозирования (тестирование на 30% данных)")
+                                    
+                                    # Создаем таблицу
+                                    backtest_df = pd.DataFrame(backtest_results).T
+                                    
+                                    # Форматируем
+                                    def format_value(val):
+                                        if isinstance(val, (int, float)):
+                                            if np.isnan(val):
+                                                return "N/A"
+                                            elif abs(val) > 1e6:
+                                                return "Ошибка"
+                                            else:
+                                                return f"{val:.4f}"
+                                        else:
+                                            return str(val)
+                                    
+                                    for col in backtest_df.columns:
+                                        backtest_df[col] = backtest_df[col].apply(format_value)
+                                    
+                                    st.dataframe(backtest_df, use_container_width=True)
+                                    
+                                    # Объяснение
+                                    with st.expander("ℹ️ Пояснение метрик"):
+                                        st.markdown("""
+                                        - **RMSE, MAE:** Абсолютные ошибки, чем меньше тем лучше
+                                        - **R²:** Сравнение с наивным прогнозом (последнее значение):
+                                          * > 0: лучше наивного прогноза
+                                          * = 0: как наивный прогноз
+                                          * < 0: хуже наивного прогноза
+                                        - **MAPE/sMAPE:** Процентные ошибки
+                                        """)
+                                else:
+                                    st.info("Для оценки точности отключите 'Быстрый режим'")
                                 
-                                # Создаем общий DataFrame для всех прогнозов
+                                # Таблица прогнозов
+                                st.subheader("Будущие значения")
+                                
                                 forecast_table = pd.DataFrame()
-                                
-                                # Собираем все прогнозы в один DataFrame
-                                for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
-                                    if model_name not in ["ARIMA", "Exponential Smoothing"]:
-                                        continue
-                                        
-                                    temp_df = forecast_df[['ds', 'yhat']].copy()
+                                for model_name, forecast_df in forecasts.items():
+                                    temp_df = forecast_df.copy()
                                     temp_df.columns = ['Дата', model_name]
+                                    temp_df = temp_df.set_index('Дата')
                                     
                                     if forecast_table.empty:
-                                        forecast_table = temp_df.set_index('Дата')
+                                        forecast_table = temp_df
                                     else:
-                                        temp_df = temp_df.set_index('Дата')
                                         forecast_table = forecast_table.join(temp_df, how='outer')
                                 
-                                # Сортируем по дате и показываем последние 10 значений
                                 if not forecast_table.empty:
-                                    forecast_table = forecast_table.sort_index(ascending=False)
+                                    forecast_table = forecast_table.sort_index()
                                     st.dataframe(
-                                        forecast_table.head(10).round(2), 
+                                        forecast_table.round(2),
                                         use_container_width=True
                                     )
                                     
-                                    # Показываем статистику по прогнозам
-                                    st.subheader("Статистика прогнозов")
-                                    stats_df = pd.DataFrame()
-                                    for model_name, forecast_df in forecasts.items():
-                                        if model_name not in ["ARIMA", "Exponential Smoothing"]:
-                                            continue
-                                            
-                                        # Проверяем прогноз на разумность
-                                        yhat_values = forecast_df['yhat'].values
-                                        if len(yhat_values) > 0:
-                                            # Фильтруем NaN и Inf
-                                            mask = ~np.isnan(yhat_values) & ~np.isinf(yhat_values)
-                                            yhat_clean = yhat_values[mask]
-                                            
-                                            if len(yhat_clean) > 0:
-                                                stats_df[model_name] = [
-                                                    np.mean(yhat_clean),
-                                                    np.std(yhat_clean),
-                                                    np.min(yhat_clean),
-                                                    np.max(yhat_clean),
-                                                    (np.std(yhat_clean) / max(abs(np.mean(yhat_clean)), 0.001)) * 100
-                                                ]
-                                            else:
-                                                stats_df[model_name] = ["N/A", "N/A", "N/A", "N/A", "N/A"]
+                                    # Сводная статистика
+                                    st.subheader("Сводная статистика прогнозов")
+                                    stats_data = []
+                                    for model_name in forecasts.keys():
+                                        values = forecast_table[model_name].dropna().values
+                                        if len(values) > 0:
+                                            stats_data.append([
+                                                np.mean(values),
+                                                np.std(values),
+                                                np.min(values),
+                                                np.max(values),
+                                                (np.std(values) / max(abs(np.mean(values)), 0.001)) * 100
+                                            ])
                                         else:
-                                            stats_df[model_name] = ["N/A", "N/A", "N/A", "N/A", "N/A"]
+                                            stats_data.append(["N/A"] * 5)
                                     
-                                    stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум', 'Коэф. вариации (%)']
+                                    stats_df = pd.DataFrame(
+                                        stats_data,
+                                        index=forecasts.keys(),
+                                        columns=['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум', 'Коэф. вариации (%)']
+                                    )
                                     st.dataframe(stats_df.round(2), use_container_width=True)
