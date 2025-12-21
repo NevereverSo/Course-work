@@ -650,7 +650,6 @@ if page == "Визуализация данных":
                 stats_df = pd.DataFrame(city_stats_summary)
                 st.dataframe(stats_df, use_container_width=True)
         
-        # ИЗМЕНЯЕМ ВКЛАДКИ - добавляем новую вкладку для info/describe
         tab1, tab2, tab3, tab4 = st.tabs(["Быстрый анализ", "Scatter Plot", "Box & Violin Plots", "Распределения"])
         
         with tab1:
@@ -677,8 +676,7 @@ if page == "Визуализация данных":
                         accuracy_pct = data.notna().sum() / len(data) * 100
                         st.metric("Точность данных", f"{accuracy_pct:.1f}%")
                     
-                    # Дополнительная статистика для выбранной колонки
-                    with st.expander("📈 Подробная статистика для выбранного признака"):
+                    with st.expander("Подробная статистика для выбранного признака"):
                         col_stats = filtered_df[selected_col].describe()
                         stats_df = pd.DataFrame({
                             'Метрика': ['Количество', 'Среднее', 'Стд. отклонение', 'Минимум', '25%', '50% (медиана)', '75%', 'Максимум'],
@@ -708,17 +706,141 @@ if page == "Визуализация данных":
                     st.plotly_chart(fig, use_container_width=True)
         
         with tab2:
-            # ... (существующий код для Scatter Plot без изменений)
+            st.subheader("Scatter Plot Analysis")
+            
+            if len(numeric_cols) >= 2:
+                col1, col2 = st.columns(2)
+                with col1:
+                    x_col = st.selectbox("X-axis:", numeric_cols, index=0)
+                with col2:
+                    y_col = st.selectbox("Y-axis:", numeric_cols, index=min(1, len(numeric_cols)-1))
+                
+                if x_col and y_col:
+                    plot_data = filtered_df.copy()
+                    
+                    if x_col == 'date' or (x_col in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[x_col])):
+                        plot_data[x_col] = convert_dates_to_numeric(plot_data[x_col])
+                    
+                    if y_col == 'date' or (y_col in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[y_col])):
+                        plot_data[y_col] = convert_dates_to_numeric(plot_data[y_col])
+                    
+                    fig = go.Figure()
+                    
+                    if selected_city == "Все города" and 'city_name' in plot_data.columns:
+                        cities = plot_data['city_name'].unique()
+                        colors = px.colors.qualitative.Set1
+                        
+                        for i, city in enumerate(cities[:10]):
+                            city_data = plot_data[plot_data['city_name'] == city]
+                            color = colors[i % len(colors)]
+                            
+                            fig.add_trace(go.Scatter(
+                                x=city_data[x_col],
+                                y=city_data[y_col],
+                                mode='markers',
+                                name=city,
+                                marker=dict(
+                                    color=color,
+                                    size=6,
+                                    opacity=0.6
+                                )
+                            ))
+                    else:
+                        fig.add_trace(go.Scatter(
+                            x=plot_data[x_col],
+                            y=plot_data[y_col],
+                            mode='markers',
+                            name='Данные',
+                            marker=dict(
+                                color='#FFC618',
+                                size=6
+                            ),
+                            opacity=0.3
+                        ))
+                    
+                    if st.checkbox("Показать линию регрессии", value=True):
+                        mask = ~np.isnan(plot_data[x_col]) & ~np.isnan(plot_data[y_col])
+                        x_clean = plot_data[x_col][mask].values
+                        y_clean = plot_data[y_col][mask].values
+                        
+                        if len(x_clean) > 1:
+                            coeffs = np.polyfit(x_clean, y_clean, 1)
+                            x_range = np.linspace(x_clean.min(), x_clean.max(), 100)
+                            y_pred = coeffs[0] * x_range + coeffs[1]
+                            
+                            fig.add_trace(go.Scatter(
+                                x=x_range,
+                                y=y_pred,
+                                mode='lines',
+                                name='Линия регрессии',
+                                line=dict(
+                                    color='red',
+                                    width=3,
+                                    dash='solid'
+                                ),
+                                opacity=1.0
+                            ))
+                    
+                    fig.update_layout(
+                        title=f"{y_col} vs {x_col} - {selected_city}",
+                        xaxis_title=x_col,
+                        yaxis_title=y_col
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
         
         with tab3:
-            # ... (существующий код для Box & Violin Plots без изменений)
+            st.subheader("Box Plot и Violin Plot")
             
-        # НОВАЯ ВКЛАДКА ДЛЯ РАСПРЕДЕЛЕНИЙ
+            if numeric_cols:
+                box_col = st.selectbox("Признак для анализа распределения:", numeric_cols[:10])
+                
+                if box_col in filtered_df.columns:
+                    plot_data = filtered_df.copy()
+                    
+                    if box_col == 'date' or (box_col in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[box_col])):
+                        plot_data[box_col] = convert_dates_to_numeric(plot_data[box_col])
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        if selected_city == "Все города" and 'city_name' in plot_data.columns:
+                            fig_box = px.box(
+                                plot_data,
+                                y=box_col,
+                                x='city_name',
+                                title=f"Box Plot: {box_col} по городам"
+                            )
+                        else:
+                            fig_box = px.box(
+                                plot_data,
+                                y=box_col,
+                                title=f"Box Plot: {box_col} - {selected_city}"
+                            )
+                        st.plotly_chart(fig_box, use_container_width=True)
+                    
+                    with col2:
+                        if selected_city == "Все города" and 'city_name' in plot_data.columns:
+                            fig_violin = px.violin(
+                                plot_data,
+                                y=box_col,
+                                x='city_name',
+                                title=f"Violin Plot: {box_col} по городам",
+                                box=True
+                            )
+                        else:
+                            fig_violin = px.violin(
+                                plot_data,
+                                y=box_col,
+                                title=f"Violin Plot: {box_col} - {selected_city}",
+                                box=True
+                            )
+                        st.plotly_chart(fig_violin, use_container_width=True)
+            
         with tab4:
             st.subheader("Анализ распределений признаков")
             
             if numeric_cols:
-                # Выбор нескольких признаков для сравнения
                 selected_features = st.multiselect(
                     "Выберите признаки для сравнения распределений:",
                     numeric_cols[:10],
@@ -726,16 +848,13 @@ if page == "Визуализация данных":
                 )
                 
                 if selected_features:
-                    # Создаем графики распределений
                     fig = go.Figure()
                     
                     colors = px.colors.qualitative.Set1
                     
                     for i, feature in enumerate(selected_features):
-                        # Нормализуем данные для лучшего сравнения
                         data = filtered_df[feature].dropna()
                         if len(data) > 0:
-                            # Гистограмма
                             fig.add_trace(go.Histogram(
                                 x=data,
                                 name=feature,
@@ -754,7 +873,6 @@ if page == "Визуализация данных":
                     
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # Сводная таблица статистики для выбранных признаков
                     st.subheader("Сводная статистика")
                     summary_stats = []
                     for feature in selected_features:
