@@ -11,13 +11,12 @@ warnings.filterwarnings('ignore')
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import (silhouette_score, r2_score, mean_absolute_error, 
-                           mean_absolute_percentage_error, mean_squared_error)
+                           mean_absolute_percentage_error, mean_squared_error,
+                           accuracy_score, classification_report)
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
-
-# ДОБАВЛЕНО: Импорт для accuracy
-from sklearn.metrics import accuracy_score, classification_report
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 
@@ -59,125 +58,66 @@ def load_data():
     return daily_df, cities_df, countries_df
 
 # ----------------------------------------------------------
-# ИНИЦИАЛИЗАЦИЯ ПЕРЕМЕННЫХ ПЕРЕД ОСНОВНЫМ КОДОМ
+# ФУНКЦИИ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ (ПЕРЕМЕЩЕНЫ ВНАЧАЛО)
 # ----------------------------------------------------------
-# Инициализируем пустые DataFrame
-daily_df = pd.DataFrame()
-cities_df = pd.DataFrame()
-countries_df = pd.DataFrame()
+@st.cache_data(ttl=1800, max_entries=5)
+def prepare_time_series_data(df, target_col, date_col='date'):
+    """
+    Подготовка данных временного ряда с оптимизацией
+    """
+    if df.empty or target_col not in df.columns or date_col not in df.columns:
+        return None
+    
+    # Сортируем по дате и убираем дубликаты
+    ts_df = df.sort_values(date_col).drop_duplicates(subset=[date_col])
+    
+    if len(ts_df) < 10:  # Минимум данных
+        return None
+    
+    # Создаем временной ряд
+    ts_data = ts_df[[date_col, target_col]].copy()
+    ts_data.columns = ['ds', 'y']
+    
+    # Интерполяция пропусков
+    ts_data['y'] = ts_data['y'].interpolate(method='linear')
+    
+    # Для переменных, которые могут быть нулевыми, добавляем небольшое значение
+    # чтобы избежать деления на ноль при расчете MAPE
+    zero_threshold_vars = ['precipitation', 'snow', 'depth', 'rain', 'snow_depth']
+    if any(var in target_col.lower() for var in zero_threshold_vars):
+        ts_data['y'] = ts_data['y'] + 0.1  # Добавляем 0.1 чтобы избежать нулей
+    
+    return ts_data
 
-# Загрузка данных с обработкой ошибок
-try:
-    daily_df, cities_df, countries_df = load_data()
-except Exception as e:
-    st.error(f"Ошибка при загрузке данных: {str(e)}")
-    daily_df = pd.DataFrame()
-    cities_df = pd.DataFrame()
-    countries_df = pd.DataFrame()
+@st.cache_data(ttl=1800, max_entries=3)
+def arima_forecast(ts_data, periods=30, order=(1,1,1)):
+    """
+    Прогнозирование ARIMA
+    """
+    try:
+        # Используем последние 100 точек для скорости
+        if len(ts_data) > 100:
+            ts_series = ts_data.set_index('ds')['y'].iloc[-100:]
+        else:
+            ts_series = ts_data.set_index('ds')['y']
+        
+        model = ARIMA(ts_series, order=order)
+        model_fit = model.fit()
+        
+        forecast = model_fit.forecast(steps=periods)
+        last_date = ts_series.index[-1]
+        forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
+        
+        forecast_df = pd.DataFrame({
+            'ds': forecast_dates,
+            'yhat': forecast.values
+        })
+        
+        return model_fit, forecast_df
+    except Exception as e:
+        st.error(f"Ошибка ARIMA: {str(e)[:100]}")
+        return None, None
 
-# ----------------------------------------------------------
-# ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ ПО ГОРОДАМ
-# ----------------------------------------------------------
-def get_available_cities(df):
-    """Получить список доступных городов"""
-    if df.empty or 'city_name' not in df.columns:
-        return []
-    cities = sorted(df['city_name'].dropna().unique().tolist())
-    return ["Все города"] + cities
-
-def filter_data_by_city(df, selected_city):
-    """Фильтрация данных по выбранному городу"""
-    if df.empty or not selected_city or selected_city == "Все города":
-        return df.copy()
-    
-    return df[df['city_name'] == selected_city].copy()
-
-def get_city_stats(df, city):
-    """Получить статистику по городу"""
-    if df.empty or city not in df['city_name'].values:
-        return {}
-    
-    city_data = df[df['city_name'] == city]
-    
-    stats = {
-        'total_days': len(city_data),
-        'date_range': f"{city_data['date'].min().date()} - {city_data['date'].max().date()}",
-        'avg_temp': round(city_data['avg_temp_c'].mean(), 2) if 'avg_temp_c' in city_data.columns else None,
-        'avg_precipitation': round(city_data['precipitation_mm'].mean(), 2) if 'precipitation_mm' in city_data.columns else None,
-        'avg_pressure': round(city_data['avg_sea_level_pres_hpa'].mean(), 2) if 'avg_sea_level_pres_hpa' in city_data.columns else None,
-        'seasons': city_data['season'].unique().tolist() if 'season' in city_data.columns else []
-    }
-    
-    return stats
-
-# ----------------------------------------------------------
-# ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ С КЭШЕМ
-# ----------------------------------------------------------
-@st.cache_data
-def get_numeric_columns(df):
-    """Быстрое получение числовых колонок"""
-    if df.empty:
-        return []
-    
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    
-    # Фильтруем ID колонки
-    id_keywords = ['station_id', 'id', 'station', '_id']
-    filtered_cols = [col for col in numeric_cols 
-                     if not any(keyword in col.lower() for keyword in id_keywords)]
-    
-    return filtered_cols
-
-@st.cache_data
-def prepare_scaled_data(_df, numeric_cols):
-    """Быстрая подготовка масштабированных данных"""
-    if len(_df) == 0 or len(numeric_cols) == 0:
-        return pd.DataFrame()
-    
-    scaler = StandardScaler()
-    
-    # Используем выборку для скорости
-    sample_size = min(3000, len(_df))
-    if len(_df) > sample_size:
-        df_sample = _df.sample(sample_size, random_state=42)
-        scaler.fit(df_sample[numeric_cols])
-    else:
-        scaler.fit(_df[numeric_cols])
-    
-    # Применяем трансформацию
-    df_scaled = _df.copy()
-    df_scaled[numeric_cols] = scaler.transform(_df[numeric_cols])
-    
-    return df_scaled
-
-# ----------------------------------------------------------
-# ДОБАВЛЕНА ФУНКЦИЯ ДЛЯ КЛАССИФИКАЦИИ
-# ----------------------------------------------------------
-@st.cache_data
-def prepare_classification_data(df, target_col, features):
-    """Подготовка данных для классификации"""
-    if df.empty or target_col not in df.columns:
-        return None, None, None, None
-    
-    # Создаем бинарную целевую переменную (например, выше/ниже медианы)
-    median_val = df[target_col].median()
-    y = (df[target_col] > median_val).astype(int)
-    
-    # Отбираем признаки
-    X = df[features].copy()
-    
-    # Заполняем пропуски
-    X = X.fillna(X.mean())
-    
-    # Масштабирование
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    return X_scaled, y, scaler, median_val
-
-# ----------------------------------------------------------
-# ФУНКЦИЯ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ (ИСПРАВЛЕННАЯ)
-# ----------------------------------------------------------
 @st.cache_data(ttl=1800, max_entries=3)
 def exponential_smoothing_forecast(ts_data, periods=30):
     """
@@ -262,33 +202,6 @@ def exponential_smoothing_forecast(ts_data, periods=30):
     except Exception as e:
         st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
         return None, None
-
-
-# ----------------------------------------------------------
-# ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ ДАТ В ЧИСЛОВОЙ ФОРМАТ
-# ----------------------------------------------------------
-def convert_dates_to_numeric(dates):
-    """Конвертирует даты в числовой формат (количество дней с первой даты)"""
-    if len(dates) == 0:
-        return dates
-    
-    # Если это уже числовой формат, возвращаем как есть
-    if np.issubdtype(dates.dtype, np.number):
-        return dates
-    
-    # Конвертируем datetime в числовой формат
-    if pd.api.types.is_datetime64_any_dtype(dates):
-        # Используем разницу в днях от первой даты
-        min_date = dates.min()
-        numeric_dates = (dates - min_date).dt.days
-        return numeric_dates
-    elif hasattr(dates.iloc[0], 'date'):
-        # Для объектов datetime.date
-        min_date = min(dates)
-        numeric_dates = [(date - min_date).days for date in dates]
-        return pd.Series(numeric_dates)
-    
-    return dates
 
 # ----------------------------------------------------------
 # НОВЫЕ ФУНКЦИИ ДЛЯ ОЦЕНКИ ТОЧНОСТИ ПРОГНОЗИРОВАНИЯ
@@ -447,7 +360,148 @@ def calculate_forecast_metrics(y_true, y_pred, variable_name=""):
     
     return metrics
 
+# ----------------------------------------------------------
+# ИНИЦИАЛИЗАЦИЯ ПЕРЕМЕННЫХ ПЕРЕД ОСНОВНЫМ КОДОМ
+# ----------------------------------------------------------
+# Инициализируем пустые DataFrame
+daily_df = pd.DataFrame()
+cities_df = pd.DataFrame()
+countries_df = pd.DataFrame()
 
+# Загрузка данных с обработкой ошибок
+try:
+    daily_df, cities_df, countries_df = load_data()
+except Exception as e:
+    st.error(f"Ошибка при загрузке данных: {str(e)}")
+    daily_df = pd.DataFrame()
+    cities_df = pd.DataFrame()
+    countries_df = pd.DataFrame()
+
+# ----------------------------------------------------------
+# ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ ПО ГОРОДАМ
+# ----------------------------------------------------------
+def get_available_cities(df):
+    """Получить список доступных городов"""
+    if df.empty or 'city_name' not in df.columns:
+        return []
+    cities = sorted(df['city_name'].dropna().unique().tolist())
+    return ["Все города"] + cities
+
+def filter_data_by_city(df, selected_city):
+    """Фильтрация данных по выбранному городу"""
+    if df.empty or not selected_city or selected_city == "Все города":
+        return df.copy()
+    
+    return df[df['city_name'] == selected_city].copy()
+
+def get_city_stats(df, city):
+    """Получить статистику по городу"""
+    if df.empty or city not in df['city_name'].values:
+        return {}
+    
+    city_data = df[df['city_name'] == city]
+    
+    stats = {
+        'total_days': len(city_data),
+        'date_range': f"{city_data['date'].min().date()} - {city_data['date'].max().date()}",
+        'avg_temp': round(city_data['avg_temp_c'].mean(), 2) if 'avg_temp_c' in city_data.columns else None,
+        'avg_precipitation': round(city_data['precipitation_mm'].mean(), 2) if 'precipitation_mm' in city_data.columns else None,
+        'avg_pressure': round(city_data['avg_sea_level_pres_hpa'].mean(), 2) if 'avg_sea_level_pres_hpa' in city_data.columns else None,
+        'seasons': city_data['season'].unique().tolist() if 'season' in city_data.columns else []
+    }
+    
+    return stats
+
+# ----------------------------------------------------------
+# ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ С КЭШЕМ
+# ----------------------------------------------------------
+@st.cache_data
+def get_numeric_columns(df):
+    """Быстрое получение числовых колонок"""
+    if df.empty:
+        return []
+    
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    
+    # Фильтруем ID колонки
+    id_keywords = ['station_id', 'id', 'station', '_id']
+    filtered_cols = [col for col in numeric_cols 
+                     if not any(keyword in col.lower() for keyword in id_keywords)]
+    
+    return filtered_cols
+
+@st.cache_data
+def prepare_scaled_data(_df, numeric_cols):
+    """Быстрая подготовка масштабированных данных"""
+    if len(_df) == 0 or len(numeric_cols) == 0:
+        return pd.DataFrame()
+    
+    scaler = StandardScaler()
+    
+    # Используем выборку для скорости
+    sample_size = min(3000, len(_df))
+    if len(_df) > sample_size:
+        df_sample = _df.sample(sample_size, random_state=42)
+        scaler.fit(df_sample[numeric_cols])
+    else:
+        scaler.fit(_df[numeric_cols])
+    
+    # Применяем трансформацию
+    df_scaled = _df.copy()
+    df_scaled[numeric_cols] = scaler.transform(_df[numeric_cols])
+    
+    return df_scaled
+
+# ----------------------------------------------------------
+# ДОБАВЛЕНА ФУНКЦИЯ ДЛЯ КЛАССИФИКАЦИИ
+# ----------------------------------------------------------
+@st.cache_data
+def prepare_classification_data(df, target_col, features):
+    """Подготовка данных для классификации"""
+    if df.empty or target_col not in df.columns:
+        return None, None, None, None
+    
+    # Создаем бинарную целевую переменную (например, выше/ниже медианы)
+    median_val = df[target_col].median()
+    y = (df[target_col] > median_val).astype(int)
+    
+    # Отбираем признаки
+    X = df[features].copy()
+    
+    # Заполняем пропуски
+    X = X.fillna(X.mean())
+    
+    # Масштабирование
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    return X_scaled, y, scaler, median_val
+
+# ----------------------------------------------------------
+# ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ ДАТ В ЧИСЛОВОЙ ФОРМАТ
+# ----------------------------------------------------------
+def convert_dates_to_numeric(dates):
+    """Конвертирует даты в числовой формат (количество дней с первой даты)"""
+    if len(dates) == 0:
+        return dates
+    
+    # Если это уже числовой формат, возвращаем как есть
+    if np.issubdtype(dates.dtype, np.number):
+        return dates
+    
+    # Конвертируем datetime в числовой формат
+    if pd.api.types.is_datetime64_any_dtype(dates):
+        # Используем разницу в днях от первой даты
+        min_date = dates.min()
+        numeric_dates = (dates - min_date).dt.days
+        return numeric_dates
+    elif hasattr(dates.iloc[0], 'date'):
+        # Для объектов datetime.date
+        min_date = min(dates)
+        numeric_dates = [(date - min_date).days for date in dates]
+        return pd.Series(numeric_dates)
+    
+    return dates
 
 # ----------------------------------------------------------
 # SIDEBAR
