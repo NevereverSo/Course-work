@@ -20,12 +20,6 @@ from sklearn.model_selection import train_test_split
 # Для прогнозирования временных рядов
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
-try:
-    from prophet import Prophet
-    PROPHET_AVAILABLE = True
-except ImportError:
-    PROPHET_AVAILABLE = False
-    st.sidebar.warning("Prophet не установлен. Установите: pip install prophet")
 
 st.set_page_config(
     page_title="Weather Analytics Dashboard", 
@@ -59,6 +53,41 @@ def load_data():
 
 # Загрузка данных
 countries_df, cities_df, daily_df = load_data()
+
+# ----------------------------------------------------------
+# ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ ПО ГОРОДАМ
+# ----------------------------------------------------------
+def get_available_cities(df):
+    """Получить список доступных городов"""
+    if df.empty or 'city_name' not in df.columns:
+        return []
+    cities = sorted(df['city_name'].dropna().unique().tolist())
+    return ["Все города"] + cities
+
+def filter_data_by_city(df, selected_city):
+    """Фильтрация данных по выбранному городу"""
+    if df.empty or not selected_city or selected_city == "Все города":
+        return df.copy()
+    
+    return df[df['city_name'] == selected_city].copy()
+
+def get_city_stats(df, city):
+    """Получить статистику по городу"""
+    if df.empty or city not in df['city_name'].values:
+        return {}
+    
+    city_data = df[df['city_name'] == city]
+    
+    stats = {
+        'total_days': len(city_data),
+        'date_range': f"{city_data['date'].min().date()} - {city_data['date'].max().date()}",
+        'avg_temp': round(city_data['avg_temp_c'].mean(), 2) if 'avg_temp_c' in city_data.columns else None,
+        'avg_precipitation': round(city_data['precipitation_mm'].mean(), 2) if 'precipitation_mm' in city_data.columns else None,
+        'avg_pressure': round(city_data['avg_sea_level_pres_hpa'].mean(), 2) if 'avg_sea_level_pres_hpa' in city_data.columns else None,
+        'seasons': city_data['season'].unique().tolist() if 'season' in city_data.columns else []
+    }
+    
+    return stats
 
 # ----------------------------------------------------------
 # ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ С КЭШЕМ
@@ -104,27 +133,18 @@ def prepare_scaled_data(_df, numeric_cols):
 # ФУНКЦИИ ДЛЯ ПРОГНОЗИРОВАНИЯ ВРЕМЕННЫХ РЯДОВ
 # ----------------------------------------------------------
 @st.cache_data(ttl=1800, max_entries=5)
-def prepare_time_series_data(df, target_col, city_col=None, date_col='date'):
+def prepare_time_series_data(df, target_col, date_col='date'):
     """
     Подготовка данных временного ряда с оптимизацией
     """
     if df.empty or target_col not in df.columns or date_col not in df.columns:
-        return None, None
-    
-    # Если указана колонка города, выбираем самый частый город
-    if city_col and city_col in df.columns and df[city_col].nunique() > 1:
-        city_counts = df[city_col].value_counts()
-        most_common_city = city_counts.index[0]
-        ts_df = df[df[city_col] == most_common_city].copy()
-    else:
-        ts_df = df.copy()
-        most_common_city = None
+        return None
     
     # Сортируем по дате и убираем дубликаты
-    ts_df = ts_df.sort_values(date_col).drop_duplicates(subset=[date_col])
+    ts_df = df.sort_values(date_col).drop_duplicates(subset=[date_col])
     
     if len(ts_df) < 10:  # Минимум данных
-        return None, most_common_city
+        return None
     
     # Создаем временной ряд
     ts_data = ts_df[[date_col, target_col]].copy()
@@ -133,7 +153,7 @@ def prepare_time_series_data(df, target_col, city_col=None, date_col='date'):
     # Интерполяция пропусков
     ts_data['y'] = ts_data['y'].interpolate(method='linear')
     
-    return ts_data, most_common_city
+    return ts_data
 
 @st.cache_data(ttl=1800, max_entries=3)
 def arima_forecast(ts_data, periods=30, order=(1,1,1)):
@@ -197,37 +217,6 @@ def exponential_smoothing_forecast(ts_data, periods=30):
         st.error(f"Ошибка Exponential Smoothing: {str(e)[:100]}")
         return None, None
 
-@st.cache_data(ttl=1800, max_entries=3)
-def prophet_forecast(ts_data, periods=30):
-    """
-    Прогнозирование Prophet
-    """
-    if not PROPHET_AVAILABLE:
-        return None, None
-    
-    try:
-        # Берем подвыборку для скорости
-        if len(ts_data) > 500:
-            ts_sample = ts_data.sample(500, random_state=42).sort_values('ds')
-        else:
-            ts_sample = ts_data.copy()
-        
-        model = Prophet(
-            seasonality_mode='additive',
-            daily_seasonality=False,
-            weekly_seasonality=True,
-            yearly_seasonality=len(ts_sample) > 365
-        )
-        
-        model.fit(ts_sample)
-        future = model.make_future_dataframe(periods=periods, freq='D')
-        forecast = model.predict(future)
-        
-        return model, forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']]
-    except Exception as e:
-        st.error(f"Ошибка Prophet: {str(e)[:100]}")
-        return None, None
-
 # ----------------------------------------------------------
 # ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ ДАТ В ЧИСЛОВОЙ ФОРМАТ
 # ----------------------------------------------------------
@@ -265,37 +254,107 @@ page = st.sidebar.radio(
     ["Визуализация данных", "Анализ данных", "Прогнозирование"]
 )
 
-if not daily_df.empty:
-    numeric_cols = get_numeric_columns(daily_df)
-    st.sidebar.success(f"Данные: {len(daily_df):,} записей, {len(numeric_cols)} признаков")
+# Выбор города в сайдбаре (доступен на всех страницах)
+st.sidebar.subheader("Выбор города")
+
+if not daily_df.empty and 'city_name' in daily_df.columns:
+    available_cities = get_available_cities(daily_df)
+    
+    if available_cities:
+        selected_city = st.sidebar.selectbox(
+            "Выберите город для анализа:",
+            options=available_cities,
+            index=0,
+            help="Выберите город для анализа. 'Все города' показывает сводную статистику."
+        )
+        
+        # Фильтруем данные по выбранному городу
+        filtered_df = filter_data_by_city(daily_df, selected_city)
+        
+        # Показываем статистику по выбранному городу
+        if selected_city != "Все города":
+            city_stats = get_city_stats(daily_df, selected_city)
+            if city_stats:
+                st.sidebar.info(f"""
+                **Статистика {selected_city}:**
+                - Дней данных: {city_stats['total_days']}
+                - Период: {city_stats['date_range']}
+                - Ср. температура: {city_stats['avg_temp']}°C
+                - Ср. осадки: {city_stats['avg_precipitation']} мм
+                - Ср. давление: {city_stats['avg_pressure']} гПа
+                """)
+        
+        numeric_cols = get_numeric_columns(filtered_df)
+        if selected_city == "Все города":
+            st.sidebar.success(f"Все города: {len(filtered_df):,} записей, {len(filtered_df['city_name'].unique())} городов")
+        else:
+            st.sidebar.success(f"{selected_city}: {len(filtered_df):,} записей, {len(numeric_cols)} признаков")
+    else:
+        st.sidebar.warning("Колонка 'city_name' не найдена в данных")
+        filtered_df = daily_df
+        selected_city = "Все города"
+        numeric_cols = get_numeric_columns(filtered_df)
 else:
-    st.sidebar.error("Данные не загружены")
+    st.sidebar.error("Данные не загружены или нет колонки с городами")
+    filtered_df = daily_df
+    selected_city = "Все города"
+    numeric_cols = []
 
 # ==========================================================
 # PAGE 1 — ВИЗУАЛИЗАЦИЯ ДАННЫХ
 # ==========================================================
 if page == "Визуализация данных":
     
-    if daily_df.empty:
+    if filtered_df.empty:
         st.error("Данные не загружены.")
     else:
-        numeric_cols = get_numeric_columns(daily_df)
+        # Показываем информацию о выбранном городе
+        if selected_city == "Все города":
+            st.header(f"Визуализация данных: Все города")
+        else:
+            st.header(f"Визуализация данных: {selected_city}")
+        
+        numeric_cols = get_numeric_columns(filtered_df)
         
         # Быстрые KPI
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if 'city_name' in daily_df.columns:
-                st.metric("Городов", daily_df['city_name'].nunique())
+            if 'city_name' in filtered_df.columns:
+                if selected_city == "Все города":
+                    unique_cities = filtered_df['city_name'].nunique()
+                    st.metric("Городов", unique_cities)
+                else:
+                    st.metric("Выбран город", selected_city)
             else:
-                st.metric("Записей", len(daily_df))
+                st.metric("Записей", len(filtered_df))
         
         with col2:
-            if 'date' in daily_df.columns:
-                st.metric("Дней данных", len(daily_df['date'].dt.date.unique()))
+            if 'date' in filtered_df.columns:
+                unique_days = len(filtered_df['date'].dt.date.unique())
+                st.metric("Дней данных", unique_days)
         
         with col3:
             st.metric("Признаков", len(numeric_cols))
+        
+        # Сводная статистика если выбраны "Все города"
+        if selected_city == "Все города" and 'city_name' in filtered_df.columns and filtered_df['city_name'].nunique() > 1:
+            with st.expander("Сводная статистика по городам"):
+                city_stats_summary = []
+                for city in filtered_df['city_name'].unique():
+                    city_data = filtered_df[filtered_df['city_name'] == city]
+                    stats = {
+                        'Город': city,
+                        'Дней': len(city_data),
+                        'Ср. темп. (°C)': round(city_data['avg_temp_c'].mean(), 1) if 'avg_temp_c' in city_data.columns else 'N/A',
+                        'Ср. осадки (мм)': round(city_data['precipitation_mm'].mean(), 1) if 'precipitation_mm' in city_data.columns else 'N/A',
+                        'Ср. давление (гПа)': round(city_data['avg_sea_level_pres_hpa'].mean(), 1) if 'avg_sea_level_pres_hpa' in city_data.columns else 'N/A',
+                        'Период': f"{city_data['date'].min().date()} - {city_data['date'].max().date()}"
+                    }
+                    city_stats_summary.append(stats)
+                
+                stats_df = pd.DataFrame(city_stats_summary)
+                st.dataframe(stats_df, use_container_width=True)
         
         # Вкладки с визуализациями
         tab1, tab2, tab3 = st.tabs(["Быстрый анализ", "Scatter Plot", "Box & Violin Plots"])
@@ -309,8 +368,8 @@ if page == "Визуализация данных":
                     numeric_cols[:15]
                 )
                 
-                if selected_col in daily_df.columns:
-                    data = daily_df[selected_col]
+                if selected_col in filtered_df.columns:
+                    data = filtered_df[selected_col]
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
@@ -324,10 +383,11 @@ if page == "Визуализация данных":
                     
                     # Гистограмма
                     fig = px.histogram(
-                        daily_df, 
+                        filtered_df, 
                         x=selected_col, 
                         nbins=30,
-                        title=f"Распределение {selected_col}"
+                        title=f"Распределение {selected_col} - {selected_city}",
+                        color='city_name' if selected_city == "Все города" and 'city_name' in filtered_df.columns else None
                     )
                     st.plotly_chart(fig, use_container_width=True)
         
@@ -343,30 +403,51 @@ if page == "Визуализация данных":
                 
                 if x_col and y_col:
                     # Создаем копию данных для графика
-                    plot_data = daily_df.copy()
+                    plot_data = filtered_df.copy()
                     
                     # Конвертируем даты в числовой формат если нужно
-                    if x_col == 'date' or (x_col in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[x_col])):
+                    if x_col == 'date' or (x_col in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[x_col])):
                         plot_data[x_col] = convert_dates_to_numeric(plot_data[x_col])
                     
-                    if y_col == 'date' or (y_col in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[y_col])):
+                    if y_col == 'date' or (y_col in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[y_col])):
                         plot_data[y_col] = convert_dates_to_numeric(plot_data[y_col])
                     
                     # Простой scatter plot с полупрозрачными точками
                     fig = go.Figure()
                     
-                    # Добавляем точки с низкой прозрачностью
-                    fig.add_trace(go.Scatter(
-                        x=plot_data[x_col],
-                        y=plot_data[y_col],
-                        mode='markers',
-                        name='Данные',
-                        marker=dict(
-                            color='rgba(100, 100, 100, 0.3)',  # Серый с прозрачностью 30%
-                            size=6
-                        ),
-                        opacity=0.3
-                    ))
+                    # Если выбраны все города, добавляем цвет по городам
+                    if selected_city == "Все города" and 'city_name' in plot_data.columns:
+                        cities = plot_data['city_name'].unique()
+                        colors = px.colors.qualitative.Set1
+                        
+                        for i, city in enumerate(cities[:10]):  # Ограничиваем 10 городами для читаемости
+                            city_data = plot_data[plot_data['city_name'] == city]
+                            color = colors[i % len(colors)]
+                            
+                            fig.add_trace(go.Scatter(
+                                x=city_data[x_col],
+                                y=city_data[y_col],
+                                mode='markers',
+                                name=city,
+                                marker=dict(
+                                    color=color,
+                                    size=6,
+                                    opacity=0.6
+                                )
+                            ))
+                    else:
+                        # Для одного города простые точки
+                        fig.add_trace(go.Scatter(
+                            x=plot_data[x_col],
+                            y=plot_data[y_col],
+                            mode='markers',
+                            name='Данные',
+                            marker=dict(
+                                color='rgba(100, 100, 100, 0.3)',  # Серый с прозрачностью 30%
+                                size=6
+                            ),
+                            opacity=0.3
+                        ))
                     
                     # Добавляем линию регрессии
                     if st.checkbox("Показать линию регрессии", value=True):
@@ -394,7 +475,7 @@ if page == "Визуализация данных":
                             ))
                     
                     fig.update_layout(
-                        title=f"{y_col} vs {x_col}",
+                        title=f"{y_col} vs {x_col} - {selected_city}",
                         xaxis_title=x_col,
                         yaxis_title=y_col
                     )
@@ -408,33 +489,50 @@ if page == "Визуализация данных":
                 # Выбор признака для анализа распределения
                 box_col = st.selectbox("Признак для анализа распределения:", numeric_cols[:10])
                 
-                if box_col in daily_df.columns:
+                if box_col in filtered_df.columns:
                     # Создаем копию данных для графика
-                    plot_data = daily_df.copy()
+                    plot_data = filtered_df.copy()
                     
                     # Конвертируем даты в числовой формат если нужно
-                    if box_col == 'date' or (box_col in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[box_col])):
+                    if box_col == 'date' or (box_col in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[box_col])):
                         plot_data[box_col] = convert_dates_to_numeric(plot_data[box_col])
                     
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        # Box Plot без цвета
-                        fig_box = px.box(
-                            plot_data,
-                            y=box_col,
-                            title=f"Box Plot: {box_col}"
-                        )
+                        # Box Plot
+                        if selected_city == "Все города" and 'city_name' in plot_data.columns:
+                            fig_box = px.box(
+                                plot_data,
+                                y=box_col,
+                                x='city_name',
+                                title=f"Box Plot: {box_col} по городам"
+                            )
+                        else:
+                            fig_box = px.box(
+                                plot_data,
+                                y=box_col,
+                                title=f"Box Plot: {box_col} - {selected_city}"
+                            )
                         st.plotly_chart(fig_box, use_container_width=True)
                     
                     with col2:
-                        # Violin Plot без цвета
-                        fig_violin = px.violin(
-                            plot_data,
-                            y=box_col,
-                            title=f"Violin Plot: {box_col}",
-                            box=True
-                        )
+                        # Violin Plot
+                        if selected_city == "Все города" and 'city_name' in plot_data.columns:
+                            fig_violin = px.violin(
+                                plot_data,
+                                y=box_col,
+                                x='city_name',
+                                title=f"Violin Plot: {box_col} по городам",
+                                box=True
+                            )
+                        else:
+                            fig_violin = px.violin(
+                                plot_data,
+                                y=box_col,
+                                title=f"Violin Plot: {box_col} - {selected_city}",
+                                box=True
+                            )
                         st.plotly_chart(fig_violin, use_container_width=True)
 
 # ==========================================================
@@ -442,10 +540,16 @@ if page == "Визуализация данных":
 # ==========================================================
 elif page == "Анализ данных":
     
-    if daily_df.empty:
+    if filtered_df.empty:
         st.error("Для анализа нужны данные.")
     else:
-        numeric_cols = get_numeric_columns(daily_df)
+        # Показываем информацию о выбранном городе
+        if selected_city == "Все города":
+            st.header(f"Анализ данных: Все города")
+        else:
+            st.header(f"Анализ данных: {selected_city}")
+        
+        numeric_cols = get_numeric_columns(filtered_df)
         
         if not numeric_cols:
             st.error("Нет числовых признаков для анализа.")
@@ -459,7 +563,7 @@ elif page == "Анализ данных":
             )
             
             if analysis_method in ["Регрессия", "Кластеризация", "PCA"]:
-                df_scaled = prepare_scaled_data(daily_df, numeric_cols)
+                df_scaled = prepare_scaled_data(filtered_df, numeric_cols)
             
             if analysis_method == "Регрессия":
                 st.header("Регрессионный анализ")
@@ -471,7 +575,7 @@ elif page == "Анализ данных":
                 
                 if target:
                     if len(numeric_cols) > 1:
-                        correlations = daily_df[numeric_cols].corr()[target].abs().sort_values(ascending=False)
+                        correlations = filtered_df[numeric_cols].corr()[target].abs().sort_values(ascending=False)
                         correlations = correlations[correlations.index != target]
                         top_features = correlations.head(3).index.tolist()
                     else:
@@ -487,10 +591,10 @@ elif page == "Анализ данных":
                     test_size = st.slider("Тестовая выборка:", 0.1, 0.4, 0.2, 0.05)
                     
                     # Конвертируем даты если нужно
-                    if target in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[target]):
+                    if target in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[target]):
                         # Для дат используем числовое представление
                         X = df_scaled[features]
-                        y = convert_dates_to_numeric(daily_df[target])
+                        y = convert_dates_to_numeric(filtered_df[target])
                         y_scaled = (y - y.mean()) / y.std()
                     else:
                         X = df_scaled[features]
@@ -575,7 +679,7 @@ elif page == "Анализ данных":
                     ))
                     
                     fig.update_layout(
-                        title="Фактические vs Предсказанные значения",
+                        title=f"Фактические vs Предсказанные значения - {selected_city}",
                         xaxis_title="Фактические значения",
                         yaxis_title="Предсказанные значения"
                     )
@@ -619,18 +723,19 @@ elif page == "Анализ данных":
                         model = DBSCAN(eps=eps, min_samples=5)
                         clusters = model.fit_predict(X_sample)
                     
-                    df_viz = daily_df.loc[X_sample.index].copy()
+                    df_viz = filtered_df.loc[X_sample.index].copy()
                     df_viz['Cluster'] = clusters
                     
                     # Конвертируем даты если нужно для первого признака
-                    if features[0] in daily_df.columns and pd.api.types.is_datetime64_any_dtype(daily_df[features[0]]):
+                    if features[0] in filtered_df.columns and pd.api.types.is_datetime64_any_dtype(filtered_df[features[0]]):
                         df_viz[features[0]] = convert_dates_to_numeric(df_viz[features[0]])
                     
                     fig = px.scatter(
                         df_viz,
                         x=features[0],
                         y=features[1],
-                        title=f"Кластеризация: {features[0]} vs {features[1]}"
+                        color='Cluster',
+                        title=f"Кластеризация: {features[0]} vs {features[1]} - {selected_city}"
                     )
                     st.plotly_chart(fig, use_container_width=True)
             
@@ -666,13 +771,13 @@ elif page == "Анализ данных":
                     ))
                     
                     fig.update_layout(
-                        title="Объясненная дисперсия",
+                        title=f"Объясненная дисперсия - {selected_city}",
                         yaxis_title='Доля дисперсии'
                     )
                     st.plotly_chart(fig, use_container_width=True)
                     
                     if n_components >= 2:
-                        df_viz = daily_df.loc[X_sample.index].copy()
+                        df_viz = filtered_df.loc[X_sample.index].copy()
                         df_viz['PC1'] = X_pca[:, 0]
                         df_viz['PC2'] = X_pca[:, 1]
                         
@@ -680,31 +785,36 @@ elif page == "Анализ данных":
                             df_viz,
                             x='PC1',
                             y='PC2',
-                            title="PCA - Проекция данных"
+                            color='city_name' if selected_city == "Все города" and 'city_name' in df_viz.columns else None,
+                            title=f"PCA - Проекция данных - {selected_city}"
                         )
                         st.plotly_chart(fig_scatter, use_container_width=True)
 
 # ==========================================================
-# PAGE 3 — ПРОГНОЗИРОВАНИЕ (НОВАЯ СТРАНИЦА)
+# PAGE 3 — ПРОГНОЗИРОВАНИЕ
 # ==========================================================
 else:  # Прогнозирование
     
-    if daily_df.empty:
+    if filtered_df.empty:
         st.error("Для прогнозирования нужны данные.")
     else:
-        st.header("Прогнозирование временных рядов")
+        # Показываем информацию о выбранном городе
+        if selected_city == "Все города":
+            st.header(f"Прогнозирование временных рядов: Все города")
+        else:
+            st.header(f"Прогнозирование временных рядов: {selected_city}")
         
         # Проверяем наличие даты
-        if 'date' not in daily_df.columns:
+        if 'date' not in filtered_df.columns:
             st.error("В данных отсутствует колонка с датами (date)")
         else:
-            numeric_cols = get_numeric_columns(daily_df)
+            numeric_cols = get_numeric_columns(filtered_df)
             
             if not numeric_cols:
                 st.error("Нет числовых признаков для прогнозирования.")
             else:
                 # Конфигурация прогнозирования
-                col1, col2, col3 = st.columns(3)
+                col1, col2 = st.columns(2)
                 
                 with col1:
                     target_col = st.selectbox(
@@ -715,25 +825,13 @@ else:  # Прогнозирование
                 with col2:
                     forecast_days = st.slider("Дней для прогноза:", 7, 90, 30)
                 
-                with col3:
-                    # Выбор города если есть
-                    if 'city_name' in daily_df.columns:
-                        cities = daily_df['city_name'].unique()[:5]
-                        selected_city = st.selectbox("Город:", cities)
-                    else:
-                        selected_city = None
+                # Предупреждение если выбраны "Все города"
+                if selected_city == "Все города":
+                    st.warning("⚠️ Для прогнозирования выбран режим 'Все города'. Анализ будет проводиться по сводным данным всех городов.")
                 
                 # Подготовка данных
                 if target_col:
-                    if selected_city:
-                        ts_data, _ = prepare_time_series_data(
-                            daily_df[daily_df['city_name'] == selected_city],
-                            target_col,
-                            'city_name'
-                        )
-                        st.info(f"Прогнозирование для города: {selected_city}")
-                    else:
-                        ts_data, _ = prepare_time_series_data(daily_df, target_col)
+                    ts_data = prepare_time_series_data(filtered_df, target_col)
                     
                     if ts_data is not None:
                         # Информация о временном ряде
@@ -763,25 +861,8 @@ else:  # Прогнозирование
                             ts_data,
                             x='ds',
                             y='y',
-                            title=f"Исходный временной ряд: {target_col}",
+                            title=f"Исходный временной ряд: {target_col} - {selected_city}",
                             line_shape='linear'
-                        )
-                        
-                        # Обновляем цвета текста для первого графика
-                        fig_original.update_layout(
-                            font=dict(color='#FFCF40'),
-                            title_font=dict(color='#FFCF40'),
-                            xaxis=dict(
-                                title_font=dict(color='#FFCF40'),
-                                tickfont=dict(color='#FFCF40')
-                            ),
-                            yaxis=dict(
-                                title_font=dict(color='#FFCF40'),
-                                tickfont=dict(color='#FFCF40')
-                            ),
-                            legend=dict(font=dict(color='#FFCF40')),
-                            plot_bgcolor='white',
-                            paper_bgcolor='white'
                         )
                         
                         st.plotly_chart(fig_original, use_container_width=True)
@@ -789,10 +870,9 @@ else:  # Прогнозирование
                         # Выбор метода прогнозирования
                         st.subheader("Методы прогнозирования")
                         
-                        # Убираем Prophet из списка выбора
                         models_to_use = st.multiselect(
                             "Выберите модели для сравнения:",
-                            ["ARIMA", "Exponential Smoothing"],  # Только две модели
+                            ["ARIMA", "Exponential Smoothing"],
                             default=["ARIMA", "Exponential Smoothing"]
                         )
                         
@@ -815,7 +895,6 @@ else:  # Прогнозирование
                                             periods=forecast_days
                                         )
                                     else:
-                                        # Пропускаем любые другие модели (на случай если что-то добавили)
                                         continue
                                         
                                     if forecast is not None:
@@ -828,29 +907,26 @@ else:  # Прогнозирование
                                 
                                 fig_forecast = go.Figure()
                                 
-                                # Исходные данные - темно-синий цвет для хорошей видимости
+                                # Исходные данные
                                 fig_forecast.add_trace(go.Scatter(
                                     x=ts_data['ds'],
                                     y=ts_data['y'],
                                     mode='lines',
                                     name='Исходные данные',
-                                    line=dict(color='#1f77b4', width=2.5)  # Темно-синий
+                                    line=dict(color='#1f77b4', width=2.5)
                                 ))
                                 
-                                # Прогнозы - яркие контрастные цвета
+                                # Прогнозы
                                 line_colors = [
                                     '#ff7f0e',  # Оранжевый (для ARIMA)
                                     '#2ca02c',  # Зеленый (для Exponential Smoothing)
-                                    '#d62728',  # Красный (запасной)
-                                    '#9467bd',  # Фиолетовый (запасной)
                                 ]
-                                line_styles = ['solid', 'dash', 'dot', 'dashdot']
+                                line_styles = ['solid', 'dash']
                                 
                                 for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
                                     color = line_colors[idx % len(line_colors)]
                                     style = line_styles[idx % len(line_styles)]
                                     
-                                    # Показываем только ARIMA и Exponential Smoothing
                                     if model_name in ["ARIMA", "Exponential Smoothing"]:
                                         fig_forecast.add_trace(go.Scatter(
                                             x=forecast_df['ds'],
@@ -864,41 +940,12 @@ else:  # Прогнозирование
                                             )
                                         ))
                                 
-                                # Обновляем цвета текста на #FFCF40 (золотисто-желтый)
                                 fig_forecast.update_layout(
-                                    title=f"Прогноз {target_col} на {forecast_days} дней",
+                                    title=f"Прогноз {target_col} на {forecast_days} дней - {selected_city}",
                                     xaxis_title="Дата",
                                     yaxis_title=target_col,
                                     plot_bgcolor='white',
-                                    paper_bgcolor='white',
-                                    font=dict(size=12, color='#FFCF40'),  # Основной цвет текста
-                                    
-                                    # Цвета подписей осей
-                                    xaxis=dict(
-                                        title_font=dict(color='#FFCF40'),
-                                        tickfont=dict(color='#FFCF40')  # Цвет меток на оси X
-                                    ),
-                                    yaxis=dict(
-                                        title_font=dict(color='#FFCF40'),
-                                        tickfont=dict(color='#FFCF40')  # Цвет меток на оси Y
-                                    ),
-                                    
-                                    # Легенда
-                                    showlegend=True,
-                                    legend=dict(
-                                        font=dict(color='#FFCF40'),  # Цвет текста легенды
-                                        orientation="h",
-                                        yanchor="bottom",
-                                        y=1.02,
-                                        xanchor="right",
-                                        x=1,
-                                        bgcolor='rgba(255, 255, 255, 0.8)',  # Полупрозрачный белый фон
-                                        bordercolor='#CCCCCC',
-                                        borderwidth=1
-                                    ),
-                                    
-                                    # Цвет заголовка
-                                    title_font=dict(color='#FFCF40', size=16)
+                                    paper_bgcolor='white'
                                 )
                                 
                                 st.plotly_chart(fig_forecast, use_container_width=True)
@@ -911,26 +958,21 @@ else:  # Прогнозирование
                                 
                                 # Собираем все прогнозы в один DataFrame
                                 for idx, (model_name, forecast_df) in enumerate(forecasts.items()):
-                                    # Пропускаем любые другие модели кроме ARIMA и Exponential Smoothing
                                     if model_name not in ["ARIMA", "Exponential Smoothing"]:
                                         continue
                                         
-                                    # Берем только значения прогноза и даты
                                     temp_df = forecast_df[['ds', 'yhat']].copy()
                                     temp_df.columns = ['Дата', model_name]
                                     
                                     if forecast_table.empty:
                                         forecast_table = temp_df.set_index('Дата')
                                     else:
-                                        # Объединяем по дате
                                         temp_df = temp_df.set_index('Дата')
                                         forecast_table = forecast_table.join(temp_df, how='outer')
                                 
                                 # Сортируем по дате и показываем последние 10 значений
                                 if not forecast_table.empty:
                                     forecast_table = forecast_table.sort_index(ascending=False)
-                                    
-                                    # Стилизуем таблицу с золотистыми заголовками
                                     st.dataframe(
                                         forecast_table.head(10).round(2), 
                                         use_container_width=True
@@ -940,7 +982,6 @@ else:  # Прогнозирование
                                     st.subheader("Статистика прогнозов")
                                     stats_df = pd.DataFrame()
                                     for model_name, forecast_df in forecasts.items():
-                                        # Пропускаем любые другие модели кроме ARIMA и Exponential Smoothing
                                         if model_name not in ["ARIMA", "Exponential Smoothing"]:
                                             continue
                                             
@@ -953,22 +994,3 @@ else:  # Прогнозирование
                                     
                                     stats_df.index = ['Среднее', 'Стд. отклонение', 'Минимум', 'Максимум']
                                     st.dataframe(stats_df.round(2), use_container_width=True)
-                                
-                                # Скачать прогнозы
-                                if st.button("Экспорт прогнозов в CSV"):
-                                    # Создаем DataFrame для экспорта
-                                    export_df = pd.DataFrame()
-                                    export_df['Дата'] = forecast_table.index
-                                    
-                                    for model_name in forecast_table.columns:
-                                        export_df[model_name] = forecast_table[model_name]
-                                    
-                                    csv = export_df.to_csv(index=False)
-                                    st.download_button(
-                                        label="Скачать прогнозы (CSV)",
-                                        data=csv,
-                                        file_name=f"forecast_{target_col}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                                        mime="text/csv"
-                                    )
-                            else:
-                                st.warning("Не удалось получить прогнозы ни одним методом.")
