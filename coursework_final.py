@@ -1339,13 +1339,13 @@ else:  # Прогнозирование
                             for model_name in models_to_use:
                                 with st.spinner(f"Обучение {model_name}..."):
                                     if model_name == "ARIMA":
-                                        model_fit, forecast = arima_forecast(
+                                        model_fit, forecast = fast_arima_forecast(
                                             ts_data, 
                                             periods=forecast_days,
                                             order=(1,1,1)
                                         )
                                     elif model_name == "Exponential Smoothing":
-                                        model_fit, forecast = exponential_smoothing_forecast(
+                                        model_fit, forecast = fast_exponential_smoothing_forecast(
                                             ts_data,
                                             periods=forecast_days
                                         )
@@ -1362,13 +1362,13 @@ else:  # Прогнозирование
                                             test_data = ts_data.iloc[-30:]
                                             
                                             if model_name == "ARIMA":
-                                                backtest_model_fit, backtest_forecast = arima_forecast(
+                                                backtest_model_fit, backtest_forecast = fast_arima_forecast(
                                                     train_data,
                                                     periods=30,
                                                     order=(1,1,1)
                                                 )
                                             else:
-                                                backtest_model_fit, backtest_forecast = exponential_smoothing_forecast(
+                                                backtest_model_fit, backtest_forecast = fast_exponential_smoothing_forecast(
                                                     train_data,
                                                     periods=30
                                                 )
