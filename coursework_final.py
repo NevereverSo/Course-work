@@ -952,7 +952,6 @@ elif page == "Анализ данных":
                         metrics = calculate_metrics(y_test, y_pred, target)
                         
                         results[name] = {
-                            'R²': metrics['R²'],
                             'MAE': metrics['MAE'],
                             'RMSE': metrics['RMSE'],
                             'MAPE (%)': metrics.get('MAPE (%)', 'N/A'),
