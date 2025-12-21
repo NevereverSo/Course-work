@@ -126,63 +126,125 @@ def fast_arima_forecast(ts_data, periods=30, order=(1,1,1)):
 @st.cache_data(ttl=1800, max_entries=3)
 def fast_exponential_smoothing_forecast(ts_data, periods=30):
     """
-    Быстрое экспоненциальное сглаживание
+    Рабочее экспоненциальное сглаживание с надежной обработкой ошибок
     """
     try:
         ts_series = ts_data.set_index('ds')['y']
         
         if len(ts_series) < 2:
+            st.warning("Слишком мало данных для прогнозирования")
             return None, None
         
-        # СИЛЬНОЕ УМЕНЬШЕНИЕ размера данных
-        max_points = 100  # Вместо 200!
+        # Уменьшаем данные для скорости (но не слишком сильно)
+        max_points = 100
         if len(ts_series) > max_points:
             ts_series = ts_series.iloc[-max_points:]
+            st.info(f"Используем последние {max_points} точек для ускорения")
         
-        # ПРОСТАЯ модель без сложной оптимизации
-        if len(ts_series) < 20:
-            # Очень короткий ряд - простая модель
-            model = SimpleExpSmoothing(ts_series)
-            model_fit = model.fit()
-        elif len(ts_series) < 50:
-            # Средний ряд - модель с трендом
-            model = ExponentialSmoothing(
+        # ПРОСТОЙ И НАДЕЖНЫЙ ПОДХОД
+        # 1. Сначала пробуем самую простую модель
+        try:
+            # Простая модель без тренда и сезонности
+            model_simple = ExponentialSmoothing(
                 ts_series,
                 seasonal=None,
-                trend='add',
+                trend=None,
                 initialization_method='estimated'
             )
-            model_fit = model.fit(optimized=False)  # НЕ оптимизируем параметры!
-        else:
-            # Длинный ряд - модель с сезонностью
-            model = ExponentialSmoothing(
-                ts_series,
-                seasonal_periods=7,  # Фиксированная недельная сезонность
-                trend='add',
-                seasonal='add',
-                initialization_method='estimated'
-            )
-            model_fit = model.fit(optimized=False, remove_bias=False)  # Быстрая фит
+            model_fit_simple = model_simple.fit()
+            
+            # Проверяем, работает ли простая модель
+            forecast_simple = model_fit_simple.forecast(steps=periods)
+            
+            # Если прогноз содержит NaN, пробуем другую модель
+            if not np.any(np.isnan(forecast_simple)):
+                model_fit = model_fit_simple
+                forecast = forecast_simple
+                model_type = "simple"
+            else:
+                raise ValueError("Simple model produced NaN")
+                
+        except Exception as e_simple:
+            # 2. Если простая модель не работает, пробуем с трендом
+            try:
+                st.info("Пробуем модель с трендом...")
+                model_trend = ExponentialSmoothing(
+                    ts_series,
+                    seasonal=None,
+                    trend='add',
+                    initialization_method='estimated'
+                )
+                model_fit_trend = model_trend.fit()
+                forecast = model_fit_trend.forecast(steps=periods)
+                model_fit = model_fit_trend
+                model_type = "with trend"
+                
+            except Exception as e_trend:
+                # 3. Если и это не работает, используем модель с сезонностью (но без сложной оптимизации)
+                st.info("Пробуем модель с сезонностью...")
+                try:
+                    # Упрощенная модель с фиксированными параметрами
+                    model_seasonal = ExponentialSmoothing(
+                        ts_series,
+                        seasonal_periods=min(7, len(ts_series)),
+                        trend='add',
+                        seasonal='add',
+                        initialization_method='estimated'
+                    )
+                    
+                    # Пробуем подогнать с ограниченными итерациями
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        model_fit_seasonal = model_seasonal.fit(
+                            smoothing_level=0.3,
+                            smoothing_trend=0.1,
+                            smoothing_seasonal=0.1,
+                            optimized=False
+                        )
+                    
+                    forecast = model_fit_seasonal.forecast(steps=periods)
+                    model_fit = model_fit_seasonal
+                    model_type = "with seasonality"
+                    
+                except Exception as e_seasonal:
+                    # 4. Все провалилось - используем наивный прогноз
+                    st.warning("Сложные модели не сработали, используем простой прогноз")
+                    return naive_forecast(ts_data, periods)
         
-        forecast = model_fit.forecast(steps=periods)
+        # Проверяем качество прогноза
+        if np.any(np.isnan(forecast)) or np.any(np.isinf(forecast)):
+            st.warning(f"Модель {model_type} дала некорректные значения, используем наивный прогноз")
+            return naive_forecast(ts_data, periods)
         
-        # Проверка прогноза
-        if np.any(np.isnan(forecast)):
-            return simple_forecast(ts_data, periods)
+        # Проверяем разумность прогноза
+        data_mean = ts_series.mean()
+        data_std = ts_series.std()
         
+        # Прогноз не должен отклоняться слишком сильно от данных
+        if np.any(np.abs(forecast - data_mean) > 5 * data_std):
+            st.warning(f"Прогноз модели {model_type} выходит за разумные пределы")
+            # Корректируем экстремальные значения
+            forecast = np.clip(forecast, 
+                              ts_series.min() - 2*data_std, 
+                              ts_series.max() + 2*data_std)
+        
+        st.success(f"Использована модель: {model_type}")
+        
+        # Создаем DataFrame с прогнозом
         last_date = ts_series.index[-1]
         forecast_dates = pd.date_range(start=last_date + timedelta(days=1), periods=periods, freq='D')
         
         forecast_df = pd.DataFrame({
             'ds': forecast_dates,
-            'yhat': forecast.values
+            'yhat': forecast
         })
         
         return model_fit, forecast_df
         
     except Exception as e:
-        st.warning(f"Exponential Smoothing не сработала, используем простой прогноз")
-        return simple_forecast(ts_data, periods)
+        st.error(f"Критическая ошибка Exponential Smoothing: {str(e)[:200]}")
+        # Возвращаем простейший прогноз
+        return naive_forecast(ts_data, periods)
 
 def simple_forecast(ts_data, periods=30):
     """
