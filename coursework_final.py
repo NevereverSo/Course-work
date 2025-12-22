@@ -1039,7 +1039,11 @@ elif page == "Анализ данных":
                     if len(X) > sample_size:
                         X_sample = X.sample(sample_size, random_state=42)
                     else:
-                        X_sample = X
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            eps = st.slider("EPS:", 0.1, 1.0, 0.5, 0.1)
+                        with col2:
+                            min_samples = st.slider("Min Samples:", 2, 10, 5)
                     
                     if algorithm == "K-Means":
                         model = KMeans(n_clusters=n_clusters, n_init=3, random_state=42)
