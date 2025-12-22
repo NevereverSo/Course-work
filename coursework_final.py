@@ -576,26 +576,20 @@ if page == "Визуализация данных":
             with col2:
                 st.subheader("Метод describe()")
                 
-                # Выбираем числовые колонки для describe
                 if len(numeric_cols) > 0:
-                    # Ограничиваем количество колонок для лучшего отображения
-                    display_cols = numeric_cols[:8]  # Первые 8 числовых колонок
+                    display_cols = numeric_cols[:8]
                     
                     describe_df = filtered_df[display_cols].describe().round(2)
                     
-                    # Переименовываем индексы на русский
                     describe_df.index = ['Количество', 'Среднее', 'Стд. отклонение', 
                                        'Минимум', '25%', '50% (медиана)', '75%', 'Максимум']
                     
                     st.dataframe(describe_df, use_container_width=True)
                     
-                    # Дополнительная статистика
                     if st.checkbox("Показать дополнительную статистику"):
                         st.write("**Корреляция между признаками:**")
-                        # Вычисляем корреляцию только для выбранных колонок
                         if len(display_cols) > 1:
                             corr_matrix = filtered_df[display_cols].corr().round(3)
-                            # Визуализация тепловой карты корреляции
                             fig = px.imshow(
                                 corr_matrix,
                                 text_auto=True,
@@ -1055,7 +1049,7 @@ elif page == "Анализ данных":
                             silhouette_avg = silhouette_score(X_sample, clusters)
                             st.metric("Silhouette Score", f"{silhouette_avg:.3f}")
                     else:
-                        model = DBSCAN(eps=eps, min_samples=5)
+                        model = DBSCAN(eps=eps, min_samples=min_samples)
                         clusters = model.fit_predict(X_sample)
                     
                     if len(X_sample) > 0:
