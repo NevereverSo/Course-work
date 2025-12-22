@@ -26,7 +26,6 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600, show_spinner="Загрузка данных...")
 def load_data():
-    """Быстрая загрузка данных"""
     try:
         daily_df = pd.read_csv("daily_weather_smallest.csv", low_memory=False)
         if not daily_df.empty and 'date' in daily_df.columns:
@@ -51,9 +50,6 @@ def load_data():
 
 @st.cache_data(ttl=1800, max_entries=5)
 def prepare_time_series_data(df, target_col, date_col='date'):
-    """
-    Подготовка данных временного ряда с оптимизацией
-    """
     if df.empty or target_col not in df.columns or date_col not in df.columns:
         return None
     
@@ -112,9 +108,6 @@ def arima_forecast(ts_data, periods=30, order=(1,1,1)):
 
 @st.cache_data(ttl=1800, max_entries=3)
 def exponential_smoothing_forecast(ts_data, periods=30):
-    """
-    ПРОСТАЯ И РАБОЧАЯ версия Exponential Smoothing
-    """
     try:
         ts_series = ts_data.set_index('ds')['y']
         
@@ -193,9 +186,6 @@ def exponential_smoothing_forecast(ts_data, periods=30):
         return None, None
 
 def simple_forecast_fallback(ts_data, periods=30):
-    """
-    Простой прогноз для случаев, когда сложные модели не работают
-    """
     try:
         ts_series = ts_data.set_index('ds')['y']
         
@@ -363,21 +353,18 @@ except Exception as e:
     countries_df = pd.DataFrame()
 
 def get_available_cities(df):
-    """Получить список доступных городов"""
     if df.empty or 'city_name' not in df.columns:
         return []
     cities = sorted(df['city_name'].dropna().unique().tolist())
     return ["Все города"] + cities
 
 def filter_data_by_city(df, selected_city):
-    """Фильтрация данных по выбранному городу"""
     if df.empty or not selected_city or selected_city == "Все города":
         return df.copy()
     
     return df[df['city_name'] == selected_city].copy()
 
 def get_city_stats(df, city):
-    """Получить статистику по городу"""
     if df.empty or city not in df['city_name'].values:
         return {}
     
@@ -396,7 +383,6 @@ def get_city_stats(df, city):
 
 @st.cache_data
 def get_numeric_columns(df):
-    """Быстрое получение числовых колонок"""
     if df.empty:
         return []
     
@@ -410,7 +396,6 @@ def get_numeric_columns(df):
 
 @st.cache_data
 def prepare_scaled_data(_df, numeric_cols):
-    """Быстрая подготовка масштабированных данных"""
     if len(_df) == 0 or len(numeric_cols) == 0:
         return pd.DataFrame()
     
@@ -429,7 +414,6 @@ def prepare_scaled_data(_df, numeric_cols):
     return df_scaled
   
 def convert_dates_to_numeric(dates):
-    """Конвертирует даты в числовой формат (количество дней с первой даты)"""
     if len(dates) == 0:
         return dates
     
@@ -536,7 +520,6 @@ if page == "Визуализация данных":
             else:
                 st.metric("Точность данных", "N/A")
         
-        # НОВАЯ СЕКЦИЯ: Методы info() и describe() для анализа данных
         with st.expander("методы info() и describe() для анализа данных", expanded=False):
             col1, col2 = st.columns(2)
             
@@ -544,26 +527,22 @@ if page == "Визуализация данных":
                 st.subheader("Метод info()")
                 st.write("**Общая информация о датасете:**")
                 
-                # Создаем строку с информацией о датасете
                 info_text = f"""
                 **Размер данных:** {filtered_df.shape[0]} строк × {filtered_df.shape[1]} столбцов
                 
                 **Типы данных:**
                 """
                 
-                # Получаем информацию о типах данных
                 dtypes_info = filtered_df.dtypes.value_counts()
                 for dtype, count in dtypes_info.items():
                     info_text += f"\n- {dtype}: {count} колонок"
                 
-                # Информация о пропусках
                 missing_info = filtered_df.isnull().sum()
                 total_missing = missing_info.sum()
                 info_text += f"\n\n**Пропуски:** {total_missing:,} пропущенных значений"
                 
                 st.info(info_text)
                 
-                # Показываем типы данных по колонкам
                 if st.checkbox("Показать типы данных для всех колонок"):
                     dtype_df = pd.DataFrame({
                         'Колонка': filtered_df.columns,
@@ -662,10 +641,9 @@ if page == "Визуализация данных":
                         })
                         st.dataframe(stats_df, use_container_width=True)
                         
-                        # Показываем информацию о пропусках
                         missing_count = filtered_df[selected_col].isnull().sum()
                         if missing_count > 0:
-                            st.warning(f"⚠️ В колонке '{selected_col}' {missing_count} пропущенных значений ({round(missing_count/len(filtered_df)*100, 1)}%)")
+                            st.warning(f"В колонке '{selected_col}' {missing_count} пропущенных значений ({round(missing_count/len(filtered_df)*100, 1)}%)")
                     
                     fig = px.histogram(
                             filtered_df, 
@@ -1029,7 +1007,6 @@ elif page == "Анализ данных":
                         with col1:
                             eps = st.slider("EPS:", 0.1, 1.0, 0.5, 0.1)
                         with col2:
-                            # ДОБАВЛЯЕМ ЭТУ СТРОКУ:
                             min_samples = st.slider("Min Samples:", 2, 10, 5)
                                 
                     X = df_scaled[features]
@@ -1045,7 +1022,6 @@ elif page == "Анализ данных":
                         clusters = model.fit_predict(X_sample)
                         st.metric("Inertia", f"{model.inertia_:.2f}")
                         
-                        # Silhouette score для оценки качества кластеризации
                         if n_clusters > 1:
                             silhouette_avg = silhouette_score(X_sample, clusters)
                             st.metric("Silhouette Score", f"{silhouette_avg:.3f}")
@@ -1081,7 +1057,7 @@ elif page == "Анализ данных":
                         )
                         st.plotly_chart(fig, use_container_width=True)
             
-            else:  # PCA
+            else:
                 st.header("Анализ главных компонент (PCA)")
                 
                 if len(numeric_cols) >= 4:
