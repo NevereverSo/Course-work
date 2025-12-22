@@ -10,14 +10,11 @@ warnings.filterwarnings('ignore')
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import (silhouette_score, r2_score, mean_absolute_error, 
                            mean_absolute_percentage_error, mean_squared_error,
                            accuracy_score, classification_report)
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
 
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
@@ -430,24 +427,6 @@ def prepare_scaled_data(_df, numeric_cols):
     df_scaled[numeric_cols] = scaler.transform(_df[numeric_cols])
     
     return df_scaled
-
-@st.cache_data
-def prepare_classification_data(df, target_col, features):
-    """Подготовка данных для классификации"""
-    if df.empty or target_col not in df.columns:
-        return None, None, None, None
-    
-    median_val = df[target_col].median()
-    y = (df[target_col] > median_val).astype(int)
-    
-    X = df[features].copy()
-    
-    X = X.fillna(X.mean())
-    
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    return X_scaled, y, scaler, median_val
   
 def convert_dates_to_numeric(dates):
     """Конвертирует даты в числовой формат (количество дней с первой даты)"""
@@ -557,7 +536,7 @@ if page == "Визуализация данных":
             else:
                 st.metric("Точность данных", "N/A")
         
-        # НОВАЯ СЕКЦИЯ: Методы info() и describe()
+        # НОВАЯ СЕКЦИЯ: Методы info() и describe() для анализа данных
         with st.expander("методы info() и describe() для анализа данных", expanded=False):
             col1, col2 = st.columns(2)
             
@@ -628,8 +607,6 @@ if page == "Визуализация данных":
                             st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("Нет числовых колонок для метода describe()")
-        
-       
         
         if selected_city == "Все города" and 'city_name' in filtered_df.columns and filtered_df['city_name'].nunique() > 1:
             with st.expander("Сводная статистика по городам"):
@@ -913,11 +890,11 @@ elif page == "Анализ данных":
             
             analysis_method = st.selectbox(
                 "Метод анализа:",
-                ["Регрессия", "Классификация", "Кластеризация", "PCA"],
+                ["Регрессия", "Кластеризация", "PCA"],
                 index=0
             )
             
-            if analysis_method in ["Регрессия", "Классификация", "Кластеризация", "PCA"]:
+            if analysis_method in ["Регрессия", "Кластеризация", "PCA"]:
                 df_scaled = prepare_scaled_data(filtered_df, numeric_cols)
             
             if analysis_method == "Регрессия":
@@ -1033,102 +1010,6 @@ elif page == "Анализ данных":
                         yaxis_title="Предсказанные значения"
                     )
                     st.plotly_chart(fig, use_container_width=True)
-            
-            elif analysis_method == "Классификация":
-                st.header("Классификация")
-                
-                target = st.selectbox(
-                    "Целевая переменная для классификации:",
-                    numeric_cols[:10]
-                )
-                
-                if target:
-                    median_val = filtered_df[target].median()
-                    st.write(f"**Медиана {target}:** {median_val:.2f}")
-                    st.write(f"**Классы:** 0 = ниже медианы, 1 = выше медианы")
-                    
-                    if len(numeric_cols) > 1:
-                        correlations = filtered_df[numeric_cols].corr()[target].abs().sort_values(ascending=False)
-                        correlations = correlations[correlations.index != target]
-                        top_features = correlations.head(3).index.tolist()
-                    else:
-                        top_features = []
-                    
-                    features = st.multiselect(
-                        "Признаки для классификации:",
-                        numeric_cols,
-                        default=top_features,
-                        key="class_features"
-                    )
-                
-                if target and features and len(features) > 0:
-                    test_size = st.slider("Размер тестовой выборки:", 0.1, 0.4, 0.3, 0.05, key="class_test_size")
-                    
-                    X, y, scaler, median_val = prepare_classification_data(filtered_df, target, features)
-                    
-                    if X is not None:
-                        X_train, X_test, y_train, y_test = train_test_split(
-                            X, y, test_size=test_size, random_state=42, stratify=y
-                        )
-                      
-                        models_config = {
-                            "Логистическая регрессия": LogisticRegression(random_state=42),
-                            "Random Forest": RandomForestClassifier(n_estimators=50, random_state=42),
-                            "Gradient Boosting": GradientBoostingClassifier(n_estimators=50, random_state=42),
-                            "SVM": SVC(kernel='rbf', probability=True, random_state=42)
-                        }
-                        
-                        results = {}
-                        
-                        for name, model in models_config.items():
-                            model.fit(X_train, y_train)
-                            y_pred = model.predict(X_test)
-                            y_pred_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
-                            
-                            report = classification_report(y_test, y_pred, output_dict=True)
-                            results[name] = {
-                                'Accuracy': accuracy_score(y_test, y_pred),
-                                'Precision': report['weighted avg']['precision'],
-                                'Recall': report['weighted avg']['recall'],
-                                'F1-Score': report['weighted avg']['f1-score']
-                            }
-                        
-                        st.subheader("Сравнение моделей классификации")
-                        results_df = pd.DataFrame(results).T.round(4)
-                        st.dataframe(results_df, use_container_width=True)
-                        
-                        best_model_name = max(results.keys(), key=lambda x: results[x]['Accuracy'])
-                        best_model = models_config[best_model_name]
-                        best_model.fit(X_train, y_train)
-                        
-                        st.subheader(f"Лучшая модель: {best_model_name}")
-                        st.metric("Accuracy", f"{results[best_model_name]['Accuracy']:.4f}")
-                        
-                        from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-                        import matplotlib.pyplot as plt
-                        
-                        fig, ax = plt.subplots(figsize=(8, 6))
-                        cm = confusion_matrix(y_test, best_model.predict(X_test))
-                        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Ниже медианы', 'Выше медианы'])
-                        disp.plot(cmap='Blues', ax=ax)
-                        ax.set_title(f"Матрица ошибок - {best_model_name}")
-                        st.pyplot(fig)
-                        
-                        if hasattr(best_model, 'feature_importances_'):
-                            st.subheader("Важность признаков")
-                            importances = pd.DataFrame({
-                                'Признак': features,
-                                'Важность': best_model.feature_importances_
-                            }).sort_values('Важность', ascending=False)
-                            
-                            fig = px.bar(
-                                importances,
-                                x='Важность',
-                                y='Признак',
-                                orientation='h',
-                                title='Важность признаков для классификации'
-                            )
-                            st.plotly_chart(fig, use_container_width=True)
             
             elif analysis_method == "Кластеризация":
                 st.header("Кластеризация")
