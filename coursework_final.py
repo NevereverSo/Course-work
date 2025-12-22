@@ -146,7 +146,6 @@ def exponential_smoothing_forecast(ts_data, periods=30):
                 try:
                     model_fit = model.fit(optimized=True)
                 except:
-                    # Если оптимизация не работает, используем ручные параметры
                     model_fit = model.fit(
                         smoothing_level=0.3,
                         smoothing_trend=0.1,
@@ -1073,14 +1072,12 @@ elif page == "Анализ данных":
                 else:
                     X = df_scaled[pca_features]
             
-                    # уменьшаем выборку для скорости
                     sample_size = min(1500, len(X))
                     if len(X) > sample_size:
                         X_sample = X.sample(sample_size, random_state=42)
                     else:
                         X_sample = X
             
-                    # --- PCA со всеми компонентами ---
                     pca_full = PCA()
                     pca_full.fit(X_sample)
             
@@ -1089,22 +1086,18 @@ elif page == "Анализ данных":
             
                     max_components = len(explained_var)
             
-                    # --- выбор числа компонент ---
                     n_components = st.slider(
                         "Количество компонент:",
                         min_value=1,
                         max_value=max_components,
                         value=min(3, max_components)
                     )
-            
-                    # --- метрика объяснённой дисперсии ---
                     explained_pct = cumulative_var[n_components - 1] * 100
                     st.metric(
                         "Объяснённая дисперсия выбранных компонент",
                         f"{explained_pct:.2f}%"
                     )
             
-                    # --- Scree plot ---
                     fig = go.Figure()
             
                     fig.add_trace(go.Bar(
@@ -1138,11 +1131,9 @@ elif page == "Анализ данных":
             
                     st.plotly_chart(fig, use_container_width=True)
             
-                    # --- PCA с выбранным числом компонент ---
                     pca = PCA(n_components=n_components)
                     X_pca = pca.fit_transform(X_sample)
             
-                    # --- визуализация первых двух компонент ---
                     if n_components >= 2:
                         df_viz = pd.DataFrame(
                             X_pca[:, :2],
