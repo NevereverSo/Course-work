@@ -1057,102 +1057,111 @@ elif page == "Анализ данных":
                         )
                         st.plotly_chart(fig, use_container_width=True)
             
-             else:
-                  st.header("Анализ главных компонент (PCA)")
-              
-                  max_features = min(10, len(numeric_cols))
-                  pca_features = st.multiselect(
-                      "Признаки для PCA:",
-                      numeric_cols,
-                      default=numeric_cols[:max_features]
-                  )
-              
-                  if len(pca_features) < 2:
-                      st.warning("Выберите минимум 2 признака для PCA")
-                  else:
-                      X = df_scaled[pca_features]
-              
-                      sample_size = min(1500, len(X))
-                      if len(X) > sample_size:
-                          X_sample = X.sample(sample_size, random_state=42)
-                      else:
-                          X_sample = X
-              
-                      pca_full = PCA()
-                      pca_full.fit(X_sample)
-              
-                      explained_var = pca_full.explained_variance_ratio_
-                      cumulative_var = np.cumsum(explained_var)
-              
-                      max_components = len(explained_var)
-              
-                      n_components = st.slider(
-                          "Количество компонент:",
-                          min_value=1,
-                          max_value=max_components,
-                          value=min(3, max_components)
-                      )
-              
-                      explained_pct = cumulative_var[n_components - 1] * 100
-                      st.metric(
-                          "Объяснённая дисперсия выбранных компонент",
-                          f"{explained_pct:.2f}%"
-                      )
-              
-                      fig = go.Figure()
-              
-                      fig.add_trace(go.Bar(
-                          x=[f"PC{i+1}" for i in range(max_components)],
-                          y=explained_var,
-                          name="Доля дисперсии",
-                          opacity=0.7
-                      ))
-              
-                      fig.add_trace(go.Scatter(
-                          x=[f"PC{i+1}" for i in range(max_components)],
-                          y=cumulative_var,
-                          mode="lines+markers",
-                          name="Накопленная дисперсия",
-                          yaxis="y2",
-                          line=dict(width=3)
-                      ))
-              
-                      fig.update_layout(
-                          title="Scree Plot — выбор оптимального числа компонент",
-                          xaxis_title="Главные компоненты",
-                          yaxis=dict(title="Доля дисперсии"),
-                          yaxis2=dict(
-                              title="Накопленная дисперсия",
-                              overlaying="y",
-                              side="right",
-                              tickformat=".0%"
-                          ),
-                          legend=dict(x=0.01, y=0.99)
-                      )
-              
-                      st.plotly_chart(fig, use_container_width=True)
-              
-                      pca = PCA(n_components=n_components)
-                      X_pca = pca.fit_transform(X_sample)
-              
-                      if n_components >= 2:
-                          df_viz = pd.DataFrame(
-                              X_pca[:, :2],
-                              columns=["PC1", "PC2"]
-                          )
-              
-                          if selected_city == "Все города" and "city_name" in filtered_df.columns:
-                              df_viz["city_name"] = filtered_df.loc[X_sample.index, "city_name"].values
-              
-                          fig_scatter = px.scatter(
-                              df_viz,
-                              x="PC1",
-                              y="PC2",
-                              color="city_name" if "city_name" in df_viz.columns else None,
-                              title="PCA: проекция на первые две компоненты"
-                          )
-              
-                          st.plotly_chart(fig_scatter, use_container_width=True)
+            else:
+                st.header("Анализ главных компонент (PCA)")
+            
+                # --- выбор признаков ---
+                max_features = min(10, len(numeric_cols))
+                pca_features = st.multiselect(
+                    "Признаки для PCA:",
+                    numeric_cols,
+                    default=numeric_cols[:max_features]
+                )
+            
+                if len(pca_features) < 2:
+                    st.warning("Выберите минимум 2 признака для PCA")
+                else:
+                    X = df_scaled[pca_features]
+            
+                    # уменьшаем выборку для скорости
+                    sample_size = min(1500, len(X))
+                    if len(X) > sample_size:
+                        X_sample = X.sample(sample_size, random_state=42)
+                    else:
+                        X_sample = X
+            
+                    # --- PCA со всеми компонентами ---
+                    pca_full = PCA()
+                    pca_full.fit(X_sample)
+            
+                    explained_var = pca_full.explained_variance_ratio_
+                    cumulative_var = np.cumsum(explained_var)
+            
+                    max_components = len(explained_var)
+            
+                    # --- выбор числа компонент ---
+                    n_components = st.slider(
+                        "Количество компонент:",
+                        min_value=1,
+                        max_value=max_components,
+                        value=min(3, max_components)
+                    )
+            
+                    # --- метрика объяснённой дисперсии ---
+                    explained_pct = cumulative_var[n_components - 1] * 100
+                    st.metric(
+                        "Объяснённая дисперсия выбранных компонент",
+                        f"{explained_pct:.2f}%"
+                    )
+            
+                    # --- Scree plot ---
+                    fig = go.Figure()
+            
+                    fig.add_trace(go.Bar(
+                        x=[f"PC{i+1}" for i in range(max_components)],
+                        y=explained_var,
+                        name="Доля дисперсии",
+                        opacity=0.7
+                    ))
+            
+                    fig.add_trace(go.Scatter(
+                        x=[f"PC{i+1}" for i in range(max_components)],
+                        y=cumulative_var,
+                        mode="lines+markers",
+                        name="Накопленная дисперсия",
+                        yaxis="y2",
+                        line=dict(width=3)
+                    ))
+            
+                    fig.update_layout(
+                        title="Scree Plot — выбор оптимального числа компонент",
+                        xaxis_title="Главные компоненты",
+                        yaxis=dict(title="Доля дисперсии"),
+                        yaxis2=dict(
+                            title="Накопленная дисперсия",
+                            overlaying="y",
+                            side="right",
+                            tickformat=".0%"
+                        ),
+                        legend=dict(x=0.01, y=0.99)
+                    )
+            
+                    st.plotly_chart(fig, use_container_width=True)
+            
+                    # --- PCA с выбранным числом компонент ---
+                    pca = PCA(n_components=n_components)
+                    X_pca = pca.fit_transform(X_sample)
+            
+                    # --- визуализация первых двух компонент ---
+                    if n_components >= 2:
+                        df_viz = pd.DataFrame(
+                            X_pca[:, :2],
+                            columns=["PC1", "PC2"]
+                        )
+            
+                        if selected_city == "Все города" and "city_name" in filtered_df.columns:
+                            df_viz["city_name"] = filtered_df.loc[X_sample.index, "city_name"].values
+            
+                        fig_scatter = px.scatter(
+                            df_viz,
+                            x="PC1",
+                            y="PC2",
+                            color="city_name" if "city_name" in df_viz.columns else None,
+                            title="PCA: проекция на первые две компоненты"
+                        )
+            
+                        st.plotly_chart(fig_scatter, use_container_width=True)
+
 
 else:
     
